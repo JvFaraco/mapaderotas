@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local configuration
+.env
+.claude/
+
+# Real data and everything derived from it never gets committed.
+data/private/*
+!data/private/.gitkeep
+*.xlsx
+*.xlsm
+geocode_cache.json*
+dist/

@@ -1,0 +1,74 @@
+{
+  "_comment": [
+    "Fictional gazetteer used by the demo build. None of these places exist:",
+    "coordinates sit in the South Atlantic, off the Brazilian coast, so a demo",
+    "map can never be mistaken for real coverage. Geometry is generated",
+    "deterministically from these centres (see geocoding/synthetic.py)."
+  ],
+  "cities": [
+    {
+      "city": "Porto Aurora",
+      "state": "SC",
+      "code": "9000101",
+      "latitude": -27.95,
+      "longitude": -46.3,
+      "radius_km": 13.0
+    },
+    {
+      "city": "Vila Meridiana",
+      "state": "SC",
+      "code": "9000102",
+      "latitude": -28.12,
+      "longitude": -46.08,
+      "radius_km": 9.0
+    },
+    {
+      "city": "Nova Bracara",
+      "state": "SC",
+      "code": "9000103",
+      "latitude": -27.82,
+      "longitude": -46.02,
+      "radius_km": 7.5
+    },
+    {
+      "city": "Costa Serena",
+      "state": "PR",
+      "code": "9000201",
+      "latitude": -27.62,
+      "longitude": -45.86,
+      "radius_km": 11.0
+    },
+    {
+      "city": "Alto Palmeiral",
+      "state": "PR",
+      "code": "9000202",
+      "latitude": -27.48,
+      "longitude": -45.62,
+      "radius_km": 8.0
+    },
+    {
+      "city": "Rio Cristalino",
+      "state": "RS",
+      "code": "9000301",
+      "latitude": -28.24,
+      "longitude": -46.52,
+      "radius_km": 12.0
+    },
+    {
+      "city": "Campo Solaris",
+      "state": "RS",
+      "code": "9000302",
+      "latitude": -28.4,
+      "longitude": -46.22,
+      "radius_km": 8.5
+    },
+    {
+      "city": "Serra Do Eco",
+      "state": "SP",
+      "code": "9000401",
+      "latitude": -27.7,
+      "longitude": -46.44,
+      "radius_km": 10.0
+    }
+  ]
+}

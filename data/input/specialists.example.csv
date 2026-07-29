@@ -1,0 +1,4 @@
+specialist_id,region,street,number,district,city,state,latitude,longitude
+TECH-001,SOUTH,Rua das Bromelias,120,Centro Historico,Porto Aurora,SC,,
+TECH-002,SOUTH,Avenida do Farol,45,Vila Nautica,Porto Aurora,SC,,
+TECH-008,SOUTH,,,Centro,Nova Bracara,SC,-27.8801,-46.0502
