@@ -152,7 +152,6 @@ python -m route_coverage build --demo --out dist/route-coverage-map.html
 
 Open `dist/route-coverage-map.html` by double-clicking it. Only the basemap
 tiles come from the internet. The same build is published on every push to
-`main` at **<https://jvfaraco.github.io/mapaderotas/>**. The same build is published on every push to
 `main` at **<https://jvfaraco.github.io/mapaderotas/>**.
 
 With your own data:

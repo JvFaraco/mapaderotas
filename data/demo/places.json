@@ -1,8 +1,10 @@
 {
   "_comment": [
-    "Fictional gazetteer used by the demo build. None of these places exist:",
-    "coordinates sit in the South Atlantic, off the Brazilian coast, so a demo",
-    "map can never be mistaken for real coverage. Geometry is generated",
+    "Fictional gazetteer used by the demo build. The city names do not exist:",
+    "they sit on land in southern Brazil only so the demo looks like the real",
+    "thing — a map of plausible municipalities, not coverage of any real",
+    "territory. Radii are in the range of actual Brazilian municipalities so",
+    "the areas are legible at state-level zoom. All geometry is generated",
     "deterministically from these centres (see geocoding/synthetic.py)."
   ],
   "cities": [
@@ -10,65 +12,65 @@
       "city": "Porto Aurora",
       "state": "SC",
       "code": "9000101",
-      "latitude": -27.95,
-      "longitude": -46.3,
-      "radius_km": 13.0
+      "latitude": -27.1,
+      "longitude": -49.35,
+      "radius_km": 26.0
     },
     {
       "city": "Vila Meridiana",
       "state": "SC",
       "code": "9000102",
-      "latitude": -28.12,
-      "longitude": -46.08,
-      "radius_km": 9.0
+      "latitude": -27.55,
+      "longitude": -49.0,
+      "radius_km": 20.0
     },
     {
       "city": "Nova Bracara",
       "state": "SC",
       "code": "9000103",
-      "latitude": -27.82,
-      "longitude": -46.02,
-      "radius_km": 7.5
+      "latitude": -26.75,
+      "longitude": -49.05,
+      "radius_km": 17.0
     },
     {
       "city": "Costa Serena",
       "state": "PR",
       "code": "9000201",
-      "latitude": -27.62,
-      "longitude": -45.86,
-      "radius_km": 11.0
+      "latitude": -26.15,
+      "longitude": -49.6,
+      "radius_km": 24.0
     },
     {
       "city": "Alto Palmeiral",
       "state": "PR",
       "code": "9000202",
-      "latitude": -27.48,
-      "longitude": -45.62,
-      "radius_km": 8.0
+      "latitude": -25.7,
+      "longitude": -49.95,
+      "radius_km": 19.0
     },
     {
       "city": "Rio Cristalino",
       "state": "RS",
       "code": "9000301",
-      "latitude": -28.24,
-      "longitude": -46.52,
-      "radius_km": 12.0
+      "latitude": -28.55,
+      "longitude": -50.9,
+      "radius_km": 25.0
     },
     {
       "city": "Campo Solaris",
       "state": "RS",
       "code": "9000302",
-      "latitude": -28.4,
-      "longitude": -46.22,
-      "radius_km": 8.5
+      "latitude": -28.95,
+      "longitude": -50.55,
+      "radius_km": 18.0
     },
     {
       "city": "Serra Do Eco",
       "state": "SP",
       "code": "9000401",
-      "latitude": -27.7,
-      "longitude": -46.44,
-      "radius_km": 10.0
+      "latitude": -25.05,
+      "longitude": -48.85,
+      "radius_km": 22.0
     }
   ]
 }
