@@ -4,7 +4,7 @@ Geospatial route coverage pipeline: progressive geocoding, official IBGE
 boundaries, Voronoi fallback, overlap clipping and a privacy-safe standalone
 map that opens by double-click.
 
-### ➜ [Open the live demo](https://jvfaraco.github.io/mapaderotas/)
+[![Open the live demo](https://img.shields.io/badge/Open%20the%20Live%20Demo-2f6fed?style=for-the-badge)](https://jvfaraco.github.io/mapaderotas/)
 
 Real pipeline, fictional data. Filter by region, search, click a route to zoom in.
 
