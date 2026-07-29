@@ -4,7 +4,11 @@ Geospatial route coverage pipeline: progressive geocoding, official IBGE
 boundaries, Voronoi fallback, overlap clipping and a privacy-safe standalone
 map that opens by double-click.
 
-![Route coverage map, demo dataset](docs/assets/overview.png)
+### ➜ [Open the live demo](https://jvfaraco.github.io/mapaderotas/)
+
+Real pipeline, fictional data. Filter by region, search, click a route to zoom in.
+
+[![Route coverage map, demo dataset](docs/assets/overview.png)](https://jvfaraco.github.io/mapaderotas/)
 
 ![Filtering by region, searching and zooming into a route](docs/assets/demo.gif)
 
@@ -147,7 +151,9 @@ python -m route_coverage build --demo --out dist/route-coverage-map.html
 ```
 
 Open `dist/route-coverage-map.html` by double-clicking it. Only the basemap
-tiles come from the internet.
+tiles come from the internet. The same build is published on every push to
+`main` at **<https://jvfaraco.github.io/mapaderotas/>**. The same build is published on every push to
+`main` at **<https://jvfaraco.github.io/mapaderotas/>**.
 
 With your own data:
 
