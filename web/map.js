@@ -127,16 +127,24 @@ function visible(record) {
 
 /* ---------- rendering ---------- */
 
-function popupHtml(record, kind) {
+function popupHtml(record, kind, subtitle) {
+  const precision = PRECISION_LABEL[record.location_precision] || record.location_precision || "—";
   const rows = [
     ["Route", record.route_id || "—"],
-    ["Region", record.region || "—"],
-    ["Specialist", record.specialist_id || "unassigned"],
-    ["Location", [record.district, record.city, record.state].filter(Boolean).join(" · ")],
-    ["Precision", PRECISION_LABEL[record.location_precision] || record.location_precision || "—"]
+    ["Region", record.specialist_id ? (record.region || "—") : "unassigned"],
+    ["Specialist", record.specialist_id || "—"],
+    ["Precision", precision]
   ];
-  return `<div class="popup-title">${kind}</div>` +
-    rows.map(([label, value]) => `<div class="popup-row">${label}: <b>${value}</b></div>`).join("");
+  const warning = APPROXIMATE.has(record.location_precision)
+    ? '<div class="pp-warn">Approximated area — not an official boundary.</div>'
+    : "";
+  return `<div class="pp-name">${kind}</div><div class="pp-sub">${subtitle}</div>` +
+    rows.map(([label, value]) => `<div class="pp-row"><span>${label}</span><span>${value}</span></div>`).join("") +
+    warning;
+}
+
+function place(record) {
+  return [record.city, record.state].filter(Boolean).join(" · ");
 }
 
 function drawLayers() {
@@ -147,7 +155,7 @@ function drawLayers() {
     if (!state.layers.cities || !visible(record)) return;
     L.geoJSON(record.geometry, {
       style: { color: colorOf(record), weight: 1, opacity: .8, fillColor: colorOf(record), fillOpacity: .12, dashArray: "4 4" }
-    }).bindPopup(popupHtml(record, "Whole city")).addTo(state.groups.cities);
+    }).bindPopup(popupHtml(record, record.city || "Whole city", `Whole municipality · ${record.state || ""}`)).addTo(state.groups.cities);
   });
 
   (data.districts || []).forEach((record) => {
@@ -162,14 +170,14 @@ function drawLayers() {
         fillOpacity: approximate ? .22 : .38,
         dashArray: approximate ? "3 5" : null
       }
-    }).bindPopup(popupHtml(record, record.district || "District")).addTo(state.groups.districts);
+    }).bindPopup(popupHtml(record, record.district || "District", place(record))).addTo(state.groups.districts);
   });
 
   (data.specialists || []).forEach((record) => {
     if (!state.layers.origins || !visible(record)) return;
     L.circleMarker([record.latitude, record.longitude], {
       radius: 6, weight: 2, color: "#fff", fillColor: colorOf(record), fillOpacity: 1
-    }).bindPopup(popupHtml(record, `Origin · ${record.specialist_id}`)).addTo(state.groups.origins);
+    }).bindPopup(popupHtml(record, record.specialist_id, `Home base · ${place(record)}`)).addTo(state.groups.origins);
   });
 
   const shown = Object.values(state.groups).reduce((total, group) => total + group.getLayers().length, 0);
@@ -204,12 +212,19 @@ function renderSidebar() {
 
   const counts = {};
   routes.forEach((route) => { counts[route.region] = (counts[route.region] || 0) + 1; });
-  el("regionFilters").innerHTML = Object.keys(counts).sort().map((region) => `
-    <label class="filter-row">
+  el("regionFilters").innerHTML = Object.keys(counts).sort().map((region) => {
+    const sample = routes.find((route) => route.region === region);
+    const swatch = region === UNASSIGNED_REGION
+      ? '<span class="swatch dash"></span>'
+      : `<span class="swatch" style="background:${sample.color}"></span>`;
+    return `
+    <label class="filter-row${state.regions[region] ? "" : " off"}">
       <input type="checkbox" data-region="${region}" ${state.regions[region] ? "checked" : ""}>
+      ${swatch}
       <span>${regionLabel(region)}</span>
       <span class="count">${counts[region]}</span>
-    </label>`).join("");
+    </label>`;
+  }).join("");
   el("regionFilters").querySelectorAll("input").forEach((input) => {
     input.onchange = () => { state.regions[input.dataset.region] = input.checked; refresh(); };
   });
@@ -223,14 +238,16 @@ function renderSidebar() {
       return b.areas - a.areas || a.route_id.localeCompare(b.route_id);
     });
   el("routeCount").textContent = `(${listed.length})`;
+  const widest = Math.max(1, ...listed.map((route) => route.areas));
   el("routeList").innerHTML = listed.map((route) => `
-    <button class="route-item" data-route="${route.route_id}">
-      <span class="swatch" style="background:${route.color}"></span>
-      <span>
-        <span class="rid">${route.route_id}</span><br>
-        <span class="meta">${regionLabel(route.region)}${route.specialist_id ? " · " + route.specialist_id : ""}</span>
+    <button class="route-item" data-route="${route.route_id}" title="Zoom to ${route.route_id}">
+      <span class="route-top">
+        <span class="swatch" style="background:${route.color}"></span>
+        <span class="route-id">${route.route_id}</span>
+        <span class="route-n">${route.areas}</span>
       </span>
-      <span class="n">${route.areas}</span>
+      <span class="route-bar"><i style="width:${Math.round(100 * route.areas / widest)}%;background:${route.color}"></i></span>
+      <span class="route-meta">${regionLabel(route.region)}${route.specialist_id ? ` · <span class="tag">${route.specialist_id}</span>` : ""}</span>
     </button>`).join("");
   el("routeList").querySelectorAll(".route-item").forEach((button) => {
     button.onclick = () => zoomToRoute(button.dataset.route);
@@ -238,10 +255,11 @@ function renderSidebar() {
 
   el("legend").innerHTML = `
     <h4>How to read it</h4>
-    <div class="row"><span class="swatch" style="background:${PALETTE[4]}"></span> Solid fill · real outline</div>
-    <div class="row"><span class="swatch hatch"></span> Hatched · approximated (Voronoi or parent area)</div>
-    <div class="row"><span class="swatch" style="background:${UNASSIGNED_COLOR}"></span> Unassigned route</div>
-    <div class="row">Circles mark specialist origins, displaced ~100 m.</div>`;
+    <div class="lg-row"><span class="lg-sw" style="background:${PALETTE[4]}"></span> Real outline (OSM / IBGE)</div>
+    <div class="lg-row"><span class="lg-sw dash"></span> Approximated (Voronoi or parent area)</div>
+    <div class="lg-row"><span class="lg-sw" style="background:${UNASSIGNED_COLOR}"></span> Unassigned route</div>
+    <div class="lg-row"><span class="lg-sw ring" style="background:${PALETTE[7]}"></span> Specialist origin</div>
+    <div class="lg-note">Origins are displaced ~100 m: the published point is never an address.</div>`;
 }
 
 function zoomToRoute(routeId) {
