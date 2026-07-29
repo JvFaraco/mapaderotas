@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Route Coverage Map</title>
+<meta name="description" content="Route coverage map: districts, whole cities and specialist origins, rendered from a privacy-safe payload.">
+<link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<header class="header">
+  <div class="header-left">
+    <button class="icon-btn" id="btnSidebar" title="Toggle panel" aria-label="Toggle side panel">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <div>
+      <div class="logo-name">Route Coverage Map</div>
+      <div class="logo-tag" id="datasetTag">coverage by route</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <span class="badge" id="badgeRoutes">— routes</span>
+    <span class="badge" id="badgeCities">— cities</span>
+    <span class="badge" id="badgeDistricts">— districts</span>
+    <button class="icon-btn" id="btnTheme" title="Toggle light/dark theme" aria-label="Toggle theme">◐</button>
+  </div>
+</header>
+
+<div class="layout" id="layout">
+  <aside class="sidebar" id="sidebar">
+    <section>
+      <input type="search" id="search" class="search-input" placeholder="Search route, region, city or district…" aria-label="Search coverage">
+    </section>
+
+    <section>
+      <div class="sb-title">Overview</div>
+      <div class="kpis">
+        <div class="kpi"><div class="v" id="kpiRoutes">—</div><div class="l">Routes</div></div>
+        <div class="kpi"><div class="v" id="kpiAreas">—</div><div class="l">Covered areas</div></div>
+        <div class="kpi"><div class="v" id="kpiReal">—</div><div class="l">Real outlines</div></div>
+        <div class="kpi warn"><div class="v" id="kpiApprox">—</div><div class="l">Approximated</div></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sb-title-row">
+        <div class="sb-title">Regions</div>
+        <div class="sb-actions">
+          <button type="button" class="sb-link" id="btnSelectAll">All</button>
+          <button type="button" class="sb-link" id="btnSelectNone">None</button>
+        </div>
+      </div>
+      <div id="regionFilters"></div>
+    </section>
+
+    <section>
+      <div class="sb-title">Layers</div>
+      <div class="pill-row">
+        <button class="pill on" data-layer="cities">Whole cities</button>
+        <button class="pill on" data-layer="districts">Districts</button>
+        <button class="pill on" data-layer="origins">Specialist origins</button>
+      </div>
+    </section>
+
+    <section>
+      <div class="sb-title-row">
+        <div class="sb-title">Routes <span class="sb-count" id="routeCount"></span></div>
+        <select id="routeSort" class="sort-select" aria-label="Sort routes">
+          <option value="areas">By covered areas</option>
+          <option value="route">By route id</option>
+          <option value="region">By region</option>
+        </select>
+      </div>
+      <div id="routeList"></div>
+    </section>
+  </aside>
+
+  <main class="map-wrap">
+    <div id="map"></div>
+    <button class="reset-btn" id="btnReset" title="Back to the initial view" aria-label="Back to the initial view">⤢</button>
+    <div class="map-banner" id="mapBanner"></div>
+    <div class="legend" id="legend"></div>
+  </main>
+</div>
+
+<div class="loader" id="loader">
+  <div class="ld-card">
+    <div class="logo-name">Route Coverage Map</div>
+    <div class="logo-tag">loading coverage…</div>
+    <div id="loaderBody"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<script>
+/* Payload injected at build time. It stays null when the page is served from
+   the web/ folder, in which case the map reads ./data.json instead. */
+window.ROUTE_COVERAGE_DATA = /*__PAYLOAD_START__*/null/*__PAYLOAD_END__*/;
+</script>
+<script src="./vendor/leaflet/leaflet.js"></script>
+<script src="./map.js"></script>
+</body>
+</html>

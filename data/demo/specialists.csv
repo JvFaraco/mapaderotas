@@ -1,0 +1,9 @@
+specialist_id,region,street,number,district,city,state
+TECH-001,SOUTH,Rua das Bromelias,120,Centro Historico,Porto Aurora,SC
+TECH-002,SOUTH,Avenida do Farol,45,Vila Nautica,Porto Aurora,SC
+TECH-003,COAST,Rua Sete Ventos,301,Praia Grande,Costa Serena,PR
+TECH-004,COAST,Travessa das Gaivotas,18,Morro Azul,Alto Palmeiral,PR
+TECH-005,HIGHLAND,Rua do Cristal,880,Alto da Serra,Rio Cristalino,RS
+TECH-006,HIGHLAND,Avenida Solaris,77,Jardim do Sol,Campo Solaris,RS
+TECH-007,VALLEY,Rua das Araucarias,215,Vale Verde,Serra Do Eco,SP
+TECH-008,SOUTH,Rua Nova Esperanca,9,Centro,Nova Bracara,SC

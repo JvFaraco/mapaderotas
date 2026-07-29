@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install (clean, from the lockfile)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+
+      - name: Lint
+        run: ruff check src tests tools
+
+      - name: Type check
+        run: mypy
+
+      - name: Tests with coverage
+        run: pytest --cov=route_coverage --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+
+      # The demo build is the end-to-end check: it runs the full cascade
+      # (geocoding, Voronoi, clipping, rendering) with no network access.
+      - name: Build the demo map
+        run: python -m route_coverage build --demo --out dist/route-coverage-map.html --stats-json dist/stats.json
+
+      - name: Check the map was generated and is self-contained
+        run: |
+          test -s dist/route-coverage-map.html
+          python - <<'PY'
+          import json, pathlib, re
+          html = pathlib.Path("dist/route-coverage-map.html").read_text(encoding="utf-8")
+          assert 'href="./' not in html and 'src="./' not in html, "output is not self-contained"
+          payload = re.search(r"/\*__PAYLOAD_START__\*/(.*?)/\*__PAYLOAD_END__\*/", html, re.S)
+          data = json.loads(payload.group(1).replace("<\\/", "</"))
+          assert data["districts"] and data["specialists"], "empty payload"
+          print(json.dumps(data["stats"], indent=2))
+          PY
+
+      - name: Scan for personal data
+        run: python tools/scan_pii.py
+
+      - name: Upload the demo map
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: route-coverage-map
+          path: |
+            dist/route-coverage-map.html
+            dist/stats.json
+
+  pages:
+    # Publishes the demo map (synthetic data only) to GitHub Pages.
+    needs: quality
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+          python -m route_coverage build --demo --out site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

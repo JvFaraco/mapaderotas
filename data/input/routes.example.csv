@@ -1,0 +1,6 @@
+route_id,specialist_id,region,state,city,district
+ROUTE-SOUTH-01,TECH-001,SOUTH,SC,Porto Aurora,Centro Historico
+ROUTE-SOUTH-01,TECH-001,SOUTH,SC,Porto Aurora,Jardim Bromelia
+ROUTE-SOUTH-02,TECH-002,SOUTH,SC,Vila Meridiana,Centro
+ROUTE-SOUTH-03,TECH-008,SOUTH,SC,Nova Bracara,
+ROUTE-DISTANT-01,,VALLEY,SP,Serra Do Eco,Colonia Antiga

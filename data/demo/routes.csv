@@ -1,0 +1,41 @@
+route_id,specialist_id,region,state,city,district
+ROUTE-SOUTH-01,TECH-001,SOUTH,SC,Porto Aurora,Centro Historico
+ROUTE-SOUTH-01,TECH-001,SOUTH,SC,Porto Aurora,Vila Nautica
+ROUTE-SOUTH-01,TECH-001,SOUTH,SC,Porto Aurora,Jardim Bromelia
+ROUTE-SOUTH-01,TECH-001,SOUTH,SC,Porto Aurora,Enseada Norte
+ROUTE-SOUTH-01,TECH-001,SOUTH,SC,Porto Aurora,Parque das Dunas
+ROUTE-SOUTH-02,TECH-002,SOUTH,SC,Porto Aurora,Costa Sul
+ROUTE-SOUTH-02,TECH-002,SOUTH,SC,Porto Aurora,Ponta Clara
+ROUTE-SOUTH-02,TECH-002,SOUTH,SC,Porto Aurora,Bairro do Farol
+ROUTE-SOUTH-02,TECH-002,SOUTH,SC,Vila Meridiana,Centro
+ROUTE-SOUTH-02,TECH-002,SOUTH,SC,Vila Meridiana,Vila Operaria
+ROUTE-SOUTH-02,TECH-002,SOUTH,SC,Vila Meridiana,Jardim Meridiano II
+ROUTE-SOUTH-03,TECH-008,SOUTH,SC,Nova Bracara,
+ROUTE-SOUTH-03,TECH-008,SOUTH,SC,Vila Meridiana,Alto do Moinho
+ROUTE-COAST-01,TECH-003,COAST,PR,Costa Serena,Praia Grande
+ROUTE-COAST-01,TECH-003,COAST,PR,Costa Serena,Ilha do Sol
+ROUTE-COAST-01,TECH-003,COAST,PR,Costa Serena,Bairro Pescadores
+ROUTE-COAST-01,TECH-003,COAST,PR,Costa Serena,Jardim Atlantico I
+ROUTE-COAST-02,TECH-004,COAST,PR,Costa Serena,Recanto Verde
+ROUTE-COAST-02,TECH-004,COAST,PR,Costa Serena,Morro do Vento
+ROUTE-COAST-02,TECH-004,COAST,PR,Alto Palmeiral,Morro Azul
+ROUTE-COAST-02,TECH-004,COAST,PR,Alto Palmeiral,Centro
+ROUTE-COAST-02,TECH-004,COAST,PR,Alto Palmeiral,Palmeiral Baixo
+ROUTE-COAST-02,TECH-004,COAST,PR,Alto Palmeiral,Setor Industrial
+ROUTE-HIGHLAND-01,TECH-005,HIGHLAND,RS,Rio Cristalino,Alto da Serra
+ROUTE-HIGHLAND-01,TECH-005,HIGHLAND,RS,Rio Cristalino,Centro
+ROUTE-HIGHLAND-01,TECH-005,HIGHLAND,RS,Rio Cristalino,Vila das Pedras
+ROUTE-HIGHLAND-01,TECH-005,HIGHLAND,RS,Rio Cristalino,Bairro Cristal
+ROUTE-HIGHLAND-01,TECH-005,HIGHLAND,RS,Rio Cristalino,Nova Encosta
+ROUTE-HIGHLAND-02,TECH-006,HIGHLAND,RS,Rio Cristalino,Distrito Norte
+ROUTE-HIGHLAND-02,TECH-006,HIGHLAND,RS,Rio Cristalino,Chacaras do Rio
+ROUTE-HIGHLAND-02,TECH-006,HIGHLAND,RS,Campo Solaris,
+ROUTE-VALLEY-01,TECH-007,VALLEY,SP,Serra Do Eco,Vale Verde
+ROUTE-VALLEY-01,TECH-007,VALLEY,SP,Serra Do Eco,Centro
+ROUTE-VALLEY-01,TECH-007,VALLEY,SP,Serra Do Eco,Jardim das Araucarias
+ROUTE-VALLEY-01,TECH-007,VALLEY,SP,Serra Do Eco,Alto Mirante
+ROUTE-VALLEY-01,TECH-007,VALLEY,SP,Serra Do Eco,Bairro Pinheiral
+ROUTE-VALLEY-01,TECH-007,VALLEY,SP,Serra Do Eco,Vila Nascente
+ROUTE-DISTANT-01,,VALLEY,SP,Serra Do Eco,Colonia Antiga
+ROUTE-DISTANT-02,,COAST,PR,Alto Palmeiral,Retiro dos Ipes
+Sum,,,,,
