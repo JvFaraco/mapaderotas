@@ -6,15 +6,17 @@ map that opens by double-click.
 
 [![Open the live demo](https://img.shields.io/badge/Open%20the%20Live%20Demo-2f6fed?style=for-the-badge)](https://jvfaraco.github.io/mapaderotas/)
 
-Real pipeline, fictional data. Filter by region, search, click a route to zoom in.
+Real pipeline, fictional data. Hover an area for its name, click it for the
+details, filter by region or search, and copy a link that reopens the same view.
 
 [![Route coverage map, demo dataset](docs/assets/overview.png)](https://jvfaraco.github.io/mapaderotas/)
 
-![Filtering by region, searching and zooming into a route](docs/assets/demo.gif)
+![Selecting a route, inspecting an approximated area and searching](docs/assets/demo.gif)
 
 > Both images come from `python -m route_coverage build --demo`, which uses an
-> entirely fictional dataset. Basemap tiles are missing from the captures
-> because they were recorded without network access.
+> entirely fictional dataset. The town names are invented but sit on real land
+> in southern Brazil, so the basemap labels underneath are real places.
+> `python tools/capture_readme_assets.py` recaptures both.
 
 ## The problem
 
@@ -53,11 +55,11 @@ Numbers from the demo dataset (`dist/stats.json`, produced by every build):
 
 | Metric | Demo run |
 | --- | --- |
-| Covered areas rendered | 39 (2 whole cities, 37 districts) |
-| Real outlines vs approximations | 21 vs 16 |
+| Covered areas on the map | 38: 2 whole cities, 36 districts (37 before clipping) |
+| Real outlines vs approximations | 21 vs 15 (16 before one was fully covered) |
 | Overlaps clipped | 6 polygons cut, 1 fully covered and dropped |
 | Cache reuse on a second run | 100% (no provider call repeated) |
-| Standalone map size | 0.21 MB, Leaflet included |
+| Standalone map size | 0.38 MB, Leaflet and fonts included |
 | Build time (demo, cold) | ~0.2 s |
 | Test coverage | 83% |
 
@@ -82,8 +84,17 @@ Numbers from the demo dataset (`dist/stats.json`, produced by every build):
 - **A cache that is actually a cache.** Geometry is fetched once; route
   ownership is refreshed from the spreadsheet on every run. Writes are atomic
   with a rolling `.bak`, so an interrupted run never costs a re-geocode.
-- **No network at build time.** Leaflet is vendored and checksum-verified; the
-  demo runs the whole pipeline against deterministic synthetic providers.
+- **No network at build time.** Leaflet and the fonts are vendored and
+  checksum-verified; the demo runs the whole pipeline against deterministic
+  synthetic providers.
+- **A map that says what it knows.** Real outlines are solid, approximations
+  are hatched with a dashed edge, whole municipalities are pale with a dashed
+  edge, and a click on any area says where its outline came from (and why, when
+  it is an approximation). Selecting a route dims the others and pulses its
+  home base; the address bar keeps the view (area, route, filters, basemap),
+  so a link reopens exactly what was on screen. Dark and light themes,
+  keyboard shortcuts (`/` to search, `Esc` to clear) and no motion for anyone
+  who asked the OS for less.
 
 ## Architecture
 
@@ -100,7 +111,7 @@ src/route_coverage/
 ├── geocoding/         # nominatim · ibge · cascade · synthetic (offline)
 ├── geometry/          # neighborhoods · voronoi · overlaps · shapes
 └── rendering/         # payload (allowlist) · standalone (bundling)
-web/                   # index.html · styles.css · map.js · vendored Leaflet
+web/                   # index.html · styles.css · map.js · vendored Leaflet and fonts
 data/                  # input examples · demo dataset · private (git-ignored)
 ```
 
@@ -208,8 +219,22 @@ and deduplication, the geocoding cascade, Voronoi filling, overlap clipping,
 the privacy allowlist, and an end-to-end demo build asserted to be
 self-contained, deterministic, overlap-free and free of personal data.
 
+`tests/test_ui_smoke.py` opens the built map in a real browser (Playwright,
+skipped when it is not installed): it boots with no console error, hover and
+click work on real outlines and approximations, a copied link reopens the same
+view, an empty search offers a way back, the phone layout fits, and names from
+the spreadsheet are rendered as text, never as HTML. Tiles are answered
+locally, so it needs no network either.
+
+```bash
+pip install playwright && python -m playwright install chromium
+pytest tests/test_ui_smoke.py
+```
+
 CI runs lint, types, tests with an 80% coverage floor, the demo build, an
-output check and a personal-data scan on Python 3.11 and 3.12.
+output check and a personal-data scan on Python 3.11 and 3.12, plus the
+browser tests in a job of their own. The site is published only when both
+pass.
 
 ## Limitations
 
@@ -221,8 +246,9 @@ output check and a personal-data scan on Python 3.11 and 3.12.
 - Nominatim's usage policy caps anonymous clients at ~1 request/second, so the
   first run over a large territory takes a while. Everything after that is
   served from the cache.
-- Basemap tiles still come from the network; only the data and the library are
-  embedded.
+- Basemap tiles still come from the network (OpenStreetMap); the data, the
+  library and the fonts are embedded. Offline, the coverage still draws, over
+  a blank background.
 - Fuzzy district matching above 0.88 similarity can pick the wrong homonym.
   The audit report (`--report`) lists the method, matched name, score and near
   misses for exactly this reason.
@@ -233,7 +259,9 @@ output check and a personal-data scan on Python 3.11 and 3.12.
 | --- | --- |
 | Cache keyed by canonical names | `CAMPINAS` and `Campinas` were becoming two entries with two overlapping polygons. |
 | Clipping at render time, not in the cache | The cache stays a faithful record of what the sources returned; presentation choices stay reversible. |
-| Vendored Leaflet with checksums | No CDN at build time, and the exact bytes shipped in every map are auditable. |
+| Vendored Leaflet and fonts with checksums | No CDN at build time, and the exact bytes shipped in every map are auditable. |
+| OpenStreetMap tiles, no API key | CARTO's free basemaps started answering with tiles stamped "API KEY REQUIRED". OSM needs no key. From disk the map uses the OSM France server instead, because the official server's usage policy asks for a Referer, which a `file://` page cannot send. |
+| Everything escaped before `innerHTML` | Names come from spreadsheets and the file gets forwarded; a district called `<img onerror=…>` must stay text. |
 | Ports for providers | Offline demo and offline tests, without mocking HTTP. |
 | Allowlist instead of denylist | A field added upstream is dropped by default rather than leaked by default. |
 | Single HTML output | The audience has no Python and no server; a double-click has to be enough. |

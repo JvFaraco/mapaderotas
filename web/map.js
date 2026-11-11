@@ -5,7 +5,9 @@
    (standalone file) or fetched from ./data.json when served locally.
 
    The payload only ever contains technical identifiers, so nothing here
-   can display a person: routes and regions are the labels.
+   can display a person: routes and regions are the labels. Every value
+   that reaches innerHTML still goes through esc(): names come from
+   spreadsheets, and the file gets forwarded around.
    ===================================================================== */
 
 const PALETTE = [
@@ -29,29 +31,83 @@ const PRECISION_LABEL = {
   voronoi: "Approximate area of influence (Voronoi)",
   city: "Municipal boundary"
 };
+/* For a district, these precisions mean the outline is not the district's
+   own. For a whole-city record, "city" is the real municipal boundary. */
 const APPROXIMATE = new Set(["voronoi", "parent_district", "city", "district_area"]);
+
+const WHY_APPROXIMATE = {
+  voronoi: "No outline exists for this district in OpenStreetMap or the IBGE census. This is the part of the city closer to its point than to any other district's, clipped to the municipal boundary.",
+  parent_district: "Drawn from a larger area that contains the district, not from its own outline.",
+  district_area: "Drawn from the area around the district's point, not from an official outline.",
+  city: "Only the municipal boundary was found, so it stands in for the district."
+};
+
+/* Where each outline came from, in the order the cascade tries them. The
+   style of the bar mirrors the map: solid = real, hatched = approximation. */
+const SOURCES = [
+  { label: "OpenStreetMap", fill: "real", match: (a) => a.kind === "district" && a.rec.location_precision === "district" },
+  { label: "OSM, name variant", fill: "real", match: (a) => a.kind === "district" && a.rec.location_precision === "osm_variant" },
+  { label: "IBGE 2022 census", fill: "real", match: (a) => a.kind === "district" && a.rec.location_precision === "ibge_district" },
+  { label: "Municipal boundary", fill: "city", match: (a) => a.kind === "city" },
+  { label: "Voronoi (approx.)", fill: "approx", match: (a) => a.approx && a.rec.location_precision === "voronoi" },
+  { label: "Parent area (approx.)", fill: "approx", match: (a) => a.approx },
+  { label: "Other", fill: "real", match: () => true }
+];
+
+/* Basemap. CARTO's free basemaps started answering with tiles stamped
+   "API KEY REQUIRED", so the map uses OpenStreetMap, which needs no key:
+   the official server when the page has an http(s) address, and OSM France
+   when the file is opened from disk, because the official server's usage
+   policy asks for a Referer, which a file:// page cannot send. */
+const ON_THE_WEB = /^https?:$/.test(location.protocol);
+const OSM_CREDIT = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+const TILES = ON_THE_WEB
+  ? { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", subdomains: "abc", attribution: OSM_CREDIT }
+  : { url: "https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png", subdomains: "abc", attribution: `${OSM_CREDIT} · tiles OSM France` };
+const BASEMAPS = {
+  muted: { label: "Muted", title: "Quiet basemap: the coverage colours carry the picture" },
+  streets: { label: "Streets", title: "The OpenStreetMap style, unfiltered" }
+};
+
+const THEME_KEY = "route-coverage-theme";
+const REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 const state = {
   data: null,
-  routes: {},          // route_id -> { route_id, region, specialist_id, color, areas }
-  regions: {},         // region -> enabled
-  layers: { cities: true, districts: true, origins: true },
-  search: "",
+  areas: [],          // { index, rec, kind, approx, route, name, place, haystack, layer }
+  origins: [],        // { rec, route, haystack, layer }
+  routes: {},         // route_id -> { route_id, region, specialist_id, color, areas, approx, cities }
+  regions: {},        // region -> enabled
+  layers: { districts: true, cities: true, origins: true },
+  search: "",         // normalized
+  searchRaw: "",
   sort: "areas",
+  base: "muted",
+  selected: null,     // route_id
+  shown: [],          // areas currently drawn
   map: null,
   groups: {},
-  initialBounds: null
+  pulse: null,
+  allBounds: null,
+  t0: 0
 };
 
 /* ---------- helpers ---------- */
 
+const el = (id) => document.getElementById(id);
+
 const norm = (value) => (value || "")
-  .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .normalize("NFD").replace(/[̀-ͯ]/g, "")
   .toLowerCase().replace(/\s+/g, " ").trim();
 
-const fmt = (value) => (value == null ? "—" : value.toLocaleString());
+const fmt = (value) => (value == null ? "—" : Number(value).toLocaleString("en-US"));
 
-const el = (id) => document.getElementById(id);
+const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (c) => ESCAPES[c]);
+
+const isNarrow = () => window.matchMedia("(max-width: 780px)").matches;
+const plural = (n, one, many) => `${fmt(n)} ${n === 1 ? one : many}`;
 
 function regionOf(record) {
   return record.specialist_id ? (record.region || "OTHER") : UNASSIGNED_REGION;
@@ -59,6 +115,11 @@ function regionOf(record) {
 
 function regionLabel(region) {
   return region === UNASSIGNED_REGION ? "Unassigned routes" : region;
+}
+
+function colorOf(routeId) {
+  const route = state.routes[routeId];
+  return route ? route.color : UNASSIGNED_COLOR;
 }
 
 /* Colour per route: unique within a region, and chosen so that routes of the
@@ -95,233 +156,816 @@ function assignColors(routes) {
   });
 }
 
+/* Hatch fill for approximated areas: one SVG pattern per route colour,
+   created the first time it is needed. */
+function hatchFor(color) {
+  const id = `hatch-${color.replace(/[^0-9a-z]/gi, "")}`;
+  if (!document.getElementById(id)) {
+    const pattern = document.createElementNS(SVG_NS, "pattern");
+    pattern.setAttribute("id", id);
+    pattern.setAttribute("patternUnits", "userSpaceOnUse");
+    pattern.setAttribute("width", "7");
+    pattern.setAttribute("height", "7");
+    pattern.setAttribute("patternTransform", "rotate(45)");
+    const tint = document.createElementNS(SVG_NS, "rect");
+    tint.setAttribute("width", "7");
+    tint.setAttribute("height", "7");
+    tint.setAttribute("fill", color);
+    tint.setAttribute("fill-opacity", ".14");
+    const line = document.createElementNS(SVG_NS, "rect");
+    line.setAttribute("width", "2.2");
+    line.setAttribute("height", "7");
+    line.setAttribute("fill", color);
+    line.setAttribute("fill-opacity", ".62");
+    pattern.append(tint, line);
+    el("patterns").querySelector("defs").appendChild(pattern);
+  }
+  return `url(#${id})`;
+}
+
+/* ---------- model ---------- */
+
 function buildModel(data) {
   const routes = {};
-  const track = (record) => {
-    const id = record.route_id || "—";
+  const areas = [];
+  const add = (rec, kind) => {
+    const id = rec.route_id || "—";
     if (!routes[id]) {
-      routes[id] = { route_id: id, region: regionOf(record), specialist_id: record.specialist_id || null, areas: 0, color: UNASSIGNED_COLOR };
+      routes[id] = {
+        route_id: id, region: regionOf(rec), specialist_id: rec.specialist_id || null,
+        color: UNASSIGNED_COLOR, areas: 0, approx: 0, cities: 0
+      };
     }
-    routes[id].areas += 1;
+    const approx = kind === "district" && APPROXIMATE.has(rec.location_precision);
+    const route = routes[id];
+    route.areas += 1;
+    if (approx) route.approx += 1;
+    if (kind === "city") route.cities += 1;
+    areas.push({
+      index: areas.length, rec, kind, approx, route: id, layer: null,
+      name: kind === "city" ? (rec.city || "Whole city") : (rec.district || "District"),
+      place: kind === "city" ? `Whole municipality · ${rec.state || ""}` : [rec.city, rec.state].filter(Boolean).join(" · "),
+      haystack: norm([id, rec.region, rec.specialist_id, rec.city, rec.district, rec.state].filter(Boolean).join(" "))
+    });
   };
-  (data.cities || []).forEach(track);
-  (data.districts || []).forEach(track);
+  (data.cities || []).forEach((rec) => add(rec, "city"));
+  (data.districts || []).forEach((rec) => add(rec, "district"));
   assignColors(routes);
+
   state.routes = routes;
+  state.areas = areas;
+  state.origins = (data.specialists || []).map((rec) => ({
+    rec, route: rec.route_id || "—", layer: null,
+    haystack: norm([rec.route_id, rec.region, rec.specialist_id, rec.city, rec.state].filter(Boolean).join(" "))
+  }));
   state.regions = {};
   Object.values(routes).forEach((route) => { state.regions[route.region] = true; });
 }
 
-function colorOf(record) {
-  const route = state.routes[record.route_id || "—"];
-  return route ? route.color : UNASSIGNED_COLOR;
+function routeOn(routeId) {
+  const route = state.routes[routeId];
+  return !!route && state.regions[route.region];
 }
 
-function visible(record) {
-  const route = state.routes[record.route_id || "—"];
-  if (!route || !state.regions[route.region]) return false;
-  if (!state.search) return true;
-  const haystack = norm([record.route_id, record.region, record.specialist_id, record.city, record.district, record.state].filter(Boolean).join(" "));
-  return haystack.includes(state.search);
+function areaVisible(area) {
+  if (!state.layers[area.kind === "city" ? "cities" : "districts"]) return false;
+  if (!routeOn(area.route)) return false;
+  return !state.search || area.haystack.includes(state.search);
 }
 
-/* ---------- rendering ---------- */
-
-function popupHtml(record, kind, subtitle) {
-  const precision = PRECISION_LABEL[record.location_precision] || record.location_precision || "—";
-  const rows = [
-    ["Route", record.route_id || "—"],
-    ["Region", record.specialist_id ? (record.region || "—") : "unassigned"],
-    ["Specialist", record.specialist_id || "—"],
-    ["Precision", precision]
-  ];
-  const warning = APPROXIMATE.has(record.location_precision)
-    ? '<div class="pp-warn">Approximated area — not an official boundary.</div>'
-    : "";
-  return `<div class="pp-name">${kind}</div><div class="pp-sub">${subtitle}</div>` +
-    rows.map(([label, value]) => `<div class="pp-row"><span>${label}</span><span>${value}</span></div>`).join("") +
-    warning;
+function originVisible(origin) {
+  if (!state.layers.origins || !routeOn(origin.route)) return false;
+  return !state.search || origin.haystack.includes(state.search);
 }
 
-function place(record) {
-  return [record.city, record.state].filter(Boolean).join(" · ");
+/* ---------- map styles ---------- */
+
+function styleFor(area, hovered = false) {
+  const color = colorOf(area.route);
+  const isSelected = state.selected === area.route;
+  const dim = !!state.selected && !isSelected;
+  const lift = hovered ? 1 : 0;
+  if (area.kind === "city") {
+    return {
+      color, weight: (isSelected ? 2.4 : 1.4) + lift, opacity: dim ? .3 : .9, dashArray: "6 5",
+      fillColor: color, fillOpacity: dim ? .03 : (isSelected ? .2 : .1) + lift * .08
+    };
+  }
+  if (area.approx) {
+    return {
+      color, weight: (isSelected ? 2.2 : 1.2) + lift, opacity: dim ? .25 : .85, dashArray: "3 5",
+      fillColor: hatchFor(color), fillOpacity: dim ? .22 : 1
+    };
+  }
+  return {
+    color, weight: (isSelected ? 2.6 : 1.6) + lift, opacity: dim ? .3 : .95, dashArray: null,
+    fillColor: color, fillOpacity: dim ? .07 : (isSelected ? .5 : .36) + lift * .12
+  };
 }
+
+function originStyle(origin) {
+  const dim = !!state.selected && state.selected !== origin.route;
+  return { radius: 6.5, weight: 2.5, color: "#fff", opacity: dim ? .45 : 1, fillColor: colorOf(origin.route), fillOpacity: dim ? .35 : 1 };
+}
+
+/* ---------- drawing ---------- */
 
 function drawLayers() {
-  const { data, map } = state;
   Object.values(state.groups).forEach((group) => group.clearLayers());
+  state.shown = [];
 
-  (data.cities || []).forEach((record) => {
-    if (!state.layers.cities || !visible(record)) return;
-    L.geoJSON(record.geometry, {
-      style: { color: colorOf(record), weight: 1, opacity: .8, fillColor: colorOf(record), fillOpacity: .12, dashArray: "4 4" }
-    }).bindPopup(popupHtml(record, record.city || "Whole city", `Whole municipality · ${record.state || ""}`)).addTo(state.groups.cities);
+  state.areas.forEach((area) => {
+    area.layer = null;
+    if (!areaVisible(area)) return;
+    const layer = L.geoJSON(area.rec.geometry, {
+      style: () => styleFor(area),
+      className: `area area-${area.kind}${area.approx ? " area-approx" : ""}`
+    });
+    layer.on("mouseover", (event) => {
+      layer.setStyle(styleFor(area, true));
+      showTip(areaTip(area), event.containerPoint);
+    });
+    layer.on("mouseout", () => {
+      layer.setStyle(styleFor(area));
+      hideTip();
+    });
+    layer.on("click", (event) => {
+      L.DomEvent.stopPropagation(event);
+      selectRoute(area.route, { area });
+    });
+    layer.addTo(state.groups[area.kind === "city" ? "cities" : "districts"]);
+    area.layer = layer;
+    state.shown.push(area);
   });
 
-  (data.districts || []).forEach((record) => {
-    if (!state.layers.districts || !visible(record)) return;
-    const approximate = APPROXIMATE.has(record.location_precision);
-    L.geoJSON(record.geometry, {
-      style: {
-        color: colorOf(record),
-        weight: approximate ? 1 : 1.6,
-        opacity: approximate ? .55 : .9,
-        fillColor: colorOf(record),
-        fillOpacity: approximate ? .22 : .38,
-        dashArray: approximate ? "3 5" : null
-      }
-    }).bindPopup(popupHtml(record, record.district || "District", place(record))).addTo(state.groups.districts);
+  state.origins.forEach((origin) => {
+    origin.layer = null;
+    if (!originVisible(origin)) return;
+    const { rec } = origin;
+    const layer = L.circleMarker([rec.latitude, rec.longitude], { ...originStyle(origin), className: "origin" });
+    layer.on("mouseover", (event) => {
+      layer.setStyle({ weight: 3.5 });
+      showTip(originTip(origin), event.containerPoint);
+    });
+    layer.on("mouseout", () => { layer.setStyle(originStyle(origin)); hideTip(); });
+    layer.on("click", (event) => {
+      L.DomEvent.stopPropagation(event);
+      selectRoute(origin.route, { origin });
+    });
+    layer.addTo(state.groups.origins);
+    origin.layer = layer;
   });
 
-  (data.specialists || []).forEach((record) => {
-    if (!state.layers.origins || !visible(record)) return;
-    L.circleMarker([record.latitude, record.longitude], {
-      radius: 6, weight: 2, color: "#fff", fillColor: colorOf(record), fillOpacity: 1
-    }).bindPopup(popupHtml(record, record.specialist_id, `Home base · ${place(record)}`)).addTo(state.groups.origins);
+  applySelectionStyles();
+  el("hudCount").textContent = fmt(state.shown.length);
+  const nothing = state.shown.length === 0 && !state.origins.some((origin) => origin.layer);
+  el("mapBanner").hidden = !nothing;
+}
+
+/* Restyles what is on the map for the current selection, without
+   rebuilding any layer. */
+function applySelectionStyles() {
+  state.shown.forEach((area) => {
+    const isSelected = state.selected === area.route;
+    area.layer.setStyle(styleFor(area));
+    area.layer.eachLayer((path) => {
+      const node = path.getElement && path.getElement();
+      if (node) node.classList.toggle("is-selected", isSelected);
+    });
+    if (isSelected) area.layer.bringToFront();
+  });
+  state.origins.forEach((origin) => {
+    if (!origin.layer) return;
+    origin.layer.setStyle(originStyle(origin));
+    if (state.selected === origin.route) origin.layer.bringToFront();
   });
 
-  const shown = Object.values(state.groups).reduce((total, group) => total + group.getLayers().length, 0);
-  el("mapBanner").classList.toggle("on", shown === 0);
-  el("mapBanner").textContent = "No coverage matches the current filters.";
-  if (!state.initialBounds) {
-    // LayerGroup has no getBounds(), so the extent is accumulated from the
-    // individual layers currently drawn.
-    const bounds = L.latLngBounds([]);
-    Object.values(state.groups).forEach((group) => group.eachLayer((layer) => {
-      if (layer.getBounds) bounds.extend(layer.getBounds());
-      else if (layer.getLatLng) bounds.extend(layer.getLatLng());
-    }));
-    if (bounds.isValid()) { state.initialBounds = bounds; map.fitBounds(bounds, { padding: [30, 30] }); }
+  if (state.pulse) { state.map.removeLayer(state.pulse); state.pulse = null; }
+  const home = state.selected && state.origins.find((origin) => origin.route === state.selected && origin.layer);
+  if (home) {
+    state.pulse = L.marker([home.rec.latitude, home.rec.longitude], {
+      interactive: false, keyboard: false, zIndexOffset: 1000,
+      icon: L.divIcon({ className: "", iconSize: [0, 0], html: `<div class="pulse" style="--c:${colorOf(home.route)}"></div>` })
+    }).addTo(state.map);
   }
 }
 
-function renderSidebar() {
-  const data = state.data;
-  const routes = Object.values(state.routes);
-  const areas = (data.cities || []).length + (data.districts || []).length;
-  const approximate = (data.districts || []).filter((record) => APPROXIMATE.has(record.location_precision)).length;
+/* ---------- hover tip ---------- */
 
-  el("kpiRoutes").textContent = fmt(routes.length);
-  el("kpiAreas").textContent = fmt(areas);
-  el("kpiReal").textContent = fmt(areas - approximate);
-  el("kpiApprox").textContent = fmt(approximate);
-  el("badgeRoutes").textContent = `${routes.length} routes`;
-  el("badgeCities").textContent = `${(data.cities || []).length} cities`;
-  el("badgeDistricts").textContent = `${(data.districts || []).length} districts`;
-  if (data.generated_at) el("datasetTag").textContent = `generated ${data.generated_at.slice(0, 10)}`;
+function areaTip(area) {
+  const route = state.routes[area.route];
+  const tag = area.kind === "city"
+    ? '<span class="tag">Whole municipality</span>'
+    : area.approx ? '<span class="tag warn">Approximated area</span>' : '<span class="tag">Real outline</span>';
+  return `<div class="tip-title"><span class="dot" style="background:${colorOf(area.route)}"></span>${esc(area.name)}</div>` +
+    `<div class="tip-sub">${esc(area.place)}</div>` +
+    `<div class="tip-sub"><b>${esc(area.route)}</b> · ${esc(regionLabel(route.region))}</div>${tag}`;
+}
 
-  const counts = {};
-  routes.forEach((route) => { counts[route.region] = (counts[route.region] || 0) + 1; });
-  el("regionFilters").innerHTML = Object.keys(counts).sort().map((region) => {
-    const sample = routes.find((route) => route.region === region);
-    const swatch = region === UNASSIGNED_REGION
-      ? '<span class="swatch dash"></span>'
-      : `<span class="swatch" style="background:${sample.color}"></span>`;
-    return `
-    <label class="filter-row${state.regions[region] ? "" : " off"}">
-      <input type="checkbox" data-region="${region}" ${state.regions[region] ? "checked" : ""}>
-      ${swatch}
-      <span>${regionLabel(region)}</span>
-      <span class="count">${counts[region]}</span>
-    </label>`;
-  }).join("");
-  el("regionFilters").querySelectorAll("input").forEach((input) => {
-    input.onchange = () => { state.regions[input.dataset.region] = input.checked; refresh(); };
+function originTip(origin) {
+  const { rec } = origin;
+  return `<div class="tip-title"><span class="dot" style="background:${colorOf(origin.route)}"></span>${esc(rec.specialist_id)}</div>` +
+    `<div class="tip-sub">Home base · ${esc([rec.city, rec.state].filter(Boolean).join(" · "))}</div>` +
+    `<div class="tip-sub">Serves <b>${esc(origin.route)}</b></div><span class="tag">Displaced ~100 m</span>`;
+}
+
+function placeTip(point) {
+  const tip = el("tip");
+  const size = state.map.getSize();
+  let x = point.x + 16, y = point.y + 14;
+  if (x + tip.offsetWidth + 8 > size.x) x = point.x - 16 - tip.offsetWidth;
+  if (y + tip.offsetHeight + 8 > size.y) y = point.y - 14 - tip.offsetHeight;
+  tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+}
+
+function showTip(html, point) {
+  const tip = el("tip");
+  tip.innerHTML = html;
+  if (point) placeTip(point);
+  tip.classList.add("on");
+}
+
+function hideTip() { el("tip").classList.remove("on"); }
+
+/* One update per frame at most: mousemove fires far more often than the
+   screen redraws. */
+function wirePointer() {
+  let last = null, queued = false;
+  const frame = () => {
+    queued = false;
+    if (!last) return;
+    el("hudCoord").textContent = `${last.latlng.lat.toFixed(5)}, ${last.latlng.lng.toFixed(5)}`;
+    if (el("tip").classList.contains("on")) placeTip(last.containerPoint);
+  };
+  state.map.on("mousemove", (event) => {
+    last = event;
+    if (!queued) { queued = true; L.Util.requestAnimFrame(frame); }
   });
+  state.map.on("mouseout movestart zoomstart", hideTip);
+  const zoom = () => { el("hudZoom").textContent = `z ${Math.round(state.map.getZoom() * 10) / 10}`; };
+  state.map.on("zoomend", zoom);
+  zoom();
+}
 
-  const listed = routes
-    .filter((route) => state.regions[route.region])
-    .filter((route) => !state.search || norm(`${route.route_id} ${route.region} ${route.specialist_id || ""}`).includes(state.search))
-    .sort((a, b) => {
-      if (state.sort === "route") return a.route_id.localeCompare(b.route_id);
-      if (state.sort === "region") return a.region.localeCompare(b.region) || a.route_id.localeCompare(b.route_id);
-      return b.areas - a.areas || a.route_id.localeCompare(b.route_id);
-    });
-  el("routeCount").textContent = `(${listed.length})`;
-  const widest = Math.max(1, ...listed.map((route) => route.areas));
-  el("routeList").innerHTML = listed.map((route) => `
-    <button class="route-item" data-route="${route.route_id}" title="Zoom to ${route.route_id}">
-      <span class="route-top">
-        <span class="swatch" style="background:${route.color}"></span>
-        <span class="route-id">${route.route_id}</span>
-        <span class="route-n">${route.areas}</span>
-      </span>
-      <span class="route-bar"><i style="width:${Math.round(100 * route.areas / widest)}%;background:${route.color}"></i></span>
-      <span class="route-meta">${regionLabel(route.region)}${route.specialist_id ? ` · <span class="tag">${route.specialist_id}</span>` : ""}</span>
-    </button>`).join("");
-  el("routeList").querySelectorAll(".route-item").forEach((button) => {
-    button.onclick = () => zoomToRoute(button.dataset.route);
-  });
+/* ---------- selection and detail card ---------- */
 
-  el("legend").innerHTML = `
-    <h4>How to read it</h4>
-    <div class="lg-row"><span class="lg-sw" style="background:${PALETTE[4]}"></span> Real outline (OSM / IBGE)</div>
-    <div class="lg-row"><span class="lg-sw dash"></span> Approximated (Voronoi or parent area)</div>
-    <div class="lg-row"><span class="lg-sw" style="background:${UNASSIGNED_COLOR}"></span> Unassigned route</div>
-    <div class="lg-row"><span class="lg-sw ring" style="background:${PALETTE[7]}"></span> Specialist origin</div>
-    <div class="lg-note">Origins are displaced ~100 m: the published point is never an address.</div>`;
+function selectRoute(routeId, { area = null, origin = null, zoom = false } = {}) {
+  state.selected = routeId;
+  applySelectionStyles();
+  markActiveRoute();
+  if (area) showAreaDetail(area);
+  else if (origin) showOriginDetail(origin);
+  else showRouteDetail(routeId);
+  if (zoom) zoomToRoute(routeId);
+  scheduleLink();
+}
+
+function clearSelection() {
+  if (!state.selected && el("detail").hidden) return;
+  state.selected = null;
+  applySelectionStyles();
+  markActiveRoute();
+  el("detail").hidden = true;
+  scheduleLink();
+}
+
+function row(label, value) {
+  return `<div class="detail-row"><span>${label}</span><strong>${value}</strong></div>`;
+}
+
+function areaSwatch(area) {
+  return `<span class="sw ${area.kind === "city" ? "sw-city" : area.approx ? "sw-approx" : "sw-real"}"></span>`;
+}
+
+function areaList(routeId, except) {
+  const items = state.areas
+    .filter((area) => area.route === routeId && area !== except)
+    .sort((a, b) => (a.rec.city || "").localeCompare(b.rec.city || "") || a.name.localeCompare(b.name));
+  if (!items.length) return '<div class="empty">No other area on this route.</div>';
+  return `<div class="list animate">${items.map((area) => `
+    <button type="button" class="area-item" data-area="${area.index}" title="Zoom to ${esc(area.name)}">
+      ${areaSwatch(area)}<span>${esc(area.name)}</span>
+      <span class="sub">${esc(area.kind === "city" ? area.rec.state : area.rec.city)}</span>
+    </button>`).join("")}</div>`;
+}
+
+function openDetail(color, html) {
+  const detail = el("detail");
+  detail.style.setProperty("--c", color);
+  detail.innerHTML = html;
+  detail.hidden = false;
+  detail.scrollTop = 0;
+}
+
+function detailHeader(title, subtitle) {
+  return `<div class="detail-top"><span class="dot"></span>
+    <div class="detail-heading"><div class="detail-title">${esc(title)}</div><div class="detail-sub">${esc(subtitle)}</div></div>
+    <button type="button" class="detail-close" data-act="close" aria-label="Close and clear the selection" title="Close (Esc)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button></div>`;
+}
+
+const ACTIONS = '<div class="detail-actions"><button type="button" class="btn primary" data-act="zoom-route">Zoom to route</button>' +
+  '<button type="button" class="btn" data-act="close">Clear selection</button></div>';
+
+function specialistValue(route) {
+  return route.specialist_id ? `<span class="tag">${esc(route.specialist_id)}</span>` : "unassigned";
+}
+
+function showAreaDetail(area) {
+  const route = state.routes[area.route];
+  const precision = PRECISION_LABEL[area.rec.location_precision] || area.rec.location_precision || "—";
+  const alert = area.approx
+    ? `<div class="detail-alert"><strong>Approximated area</strong><span>${esc(WHY_APPROXIMATE[area.rec.location_precision] || "Not an official boundary.")}</span></div>`
+    : "";
+  openDetail(route.color,
+    detailHeader(area.name, area.place) + alert +
+    row("Route", esc(route.route_id)) +
+    row("Region", esc(regionLabel(route.region))) +
+    row("Specialist", specialistValue(route)) +
+    row("Outline", esc(precision)) +
+    `<div class="detail-section"><h4>Same route · ${plural(route.areas - 1, "other area", "other areas")}</h4>${areaList(area.route, area)}</div>` +
+    ACTIONS);
+}
+
+function showRouteDetail(routeId) {
+  const route = state.routes[routeId];
+  openDetail(route.color,
+    detailHeader(route.route_id, regionLabel(route.region)) +
+    row("Specialist", specialistValue(route)) +
+    row("Covered areas", fmt(route.areas)) +
+    row("Real outlines", fmt(route.areas - route.approx)) +
+    row("Approximated", route.approx ? `<span class="tag warn">${fmt(route.approx)}</span>` : "0") +
+    (route.cities ? row("Whole cities", fmt(route.cities)) : "") +
+    `<div class="detail-section"><h4>Areas on this route</h4>${areaList(routeId, null)}</div>` +
+    ACTIONS);
+}
+
+function showOriginDetail(origin) {
+  const { rec } = origin;
+  const route = state.routes[origin.route];
+  openDetail(colorOf(origin.route),
+    detailHeader(rec.specialist_id, `Home base · ${[rec.city, rec.state].filter(Boolean).join(" · ")}`) +
+    row("Route", esc(origin.route)) +
+    row("Region", esc(route ? regionLabel(route.region) : rec.region || "—")) +
+    row("Position", esc(PRECISION_LABEL[rec.location_precision] || rec.location_precision || "—")) +
+    '<div class="note">The point is displaced about 100 m on purpose: a published home base is never an address.</div>' +
+    (route ? `<div class="detail-section"><h4>Areas served</h4>${areaList(origin.route, null)}</div>` : "") +
+    ACTIONS);
+}
+
+/* ---------- camera ---------- */
+
+function boundsOf(areas) {
+  const bounds = L.latLngBounds([]);
+  areas.forEach((area) => bounds.extend(L.geoJSON(area.rec.geometry).getBounds()));
+  return bounds;
+}
+
+/* Leaves room for the detail card on the right, so the target is not hidden
+   behind it. */
+function flyTo(bounds) {
+  if (!bounds.isValid()) return;
+  const detail = el("detail");
+  const open = !detail.hidden;
+  /* Desktop: the card is on the right. Phone: it is a sheet at the bottom. */
+  const options = isNarrow()
+    ? { paddingTopLeft: [24, 24], paddingBottomRight: [24, open ? detail.offsetHeight + 24 : 120], maxZoom: 14 }
+    : { paddingTopLeft: [40, 40], paddingBottomRight: [open ? 370 : 40, 70], maxZoom: 14 };
+  if (REDUCED_MOTION) state.map.fitBounds(bounds, { ...options, animate: false });
+  else state.map.flyToBounds(bounds, { ...options, duration: .8 });
 }
 
 function zoomToRoute(routeId) {
-  const records = [...(state.data.cities || []), ...(state.data.districts || [])].filter((record) => record.route_id === routeId);
-  if (!records.length) return;
-  const group = L.featureGroup(records.map((record) => L.geoJSON(record.geometry)));
-  state.map.fitBounds(group.getBounds(), { padding: [40, 40] });
+  const areas = state.areas.filter((area) => area.route === routeId);
+  const bounds = boundsOf(areas);
+  state.origins.filter((origin) => origin.route === routeId).forEach((origin) => bounds.extend([origin.rec.latitude, origin.rec.longitude]));
+  flyTo(bounds);
 }
 
-function refresh() {
-  drawLayers();
-  renderSidebar();
+function fitAll(animate = !REDUCED_MOTION) {
+  if (state.allBounds && state.allBounds.isValid()) {
+    state.map.fitBounds(state.allBounds, { padding: [30, 30], animate });
+  }
 }
+
+/* ---------- side panel ---------- */
+
+function renderStats() {
+  const shown = state.shown;
+  const routes = new Set(shown.map((area) => area.route));
+  const origins = state.origins.filter((origin) => origin.layer).length;
+  el("kpiAreas").textContent = fmt(shown.length);
+  el("kpiRoutes").textContent = fmt(routes.size);
+  el("kpiCities").textContent = fmt(shown.filter((area) => area.kind === "city").length);
+  el("kpiDistricts").textContent = fmt(shown.filter((area) => area.kind === "district").length);
+  el("kpiOrigins").textContent = fmt(origins);
+
+  const counts = SOURCES.map(() => 0);
+  shown.forEach((area) => { counts[SOURCES.findIndex((source) => source.match(area))] += 1; });
+  const widest = Math.max(1, ...counts);
+  const rows = SOURCES.map((source, i) => counts[i] ? `
+    <div class="bar-row${source.fill === "approx" ? " approx" : ""}">
+      <span class="bar-label"><span class="sw sw-${source.fill}"></span>${source.label}</span>
+      <span class="bar-track"><i class="bar-fill fill-${source.fill}" style="width:${Math.round(100 * counts[i] / widest)}%"></i></span>
+      <span class="bar-num">${fmt(counts[i])}</span>
+    </div>` : "").join("");
+  const stats = state.data.stats || {};
+  const clipped = stats.overlaps_clipped
+    ? `<div class="note"><strong>${fmt(stats.overlaps_clipped)}</strong> overlapping outlines were clipped at build time, so no two specialists share an area.</div>`
+    : "";
+  el("sourceBars").innerHTML = (rows || '<div class="empty">Nothing in view.</div>') + clipped;
+}
+
+function renderRegions() {
+  const routes = Object.values(state.routes);
+  const byRegion = {};
+  routes.forEach((route) => { (byRegion[route.region] = byRegion[route.region] || []).push(route); });
+  el("regionFilters").innerHTML = Object.keys(byRegion).sort((a, b) => {
+    if (a === UNASSIGNED_REGION) return 1;
+    if (b === UNASSIGNED_REGION) return -1;
+    return a.localeCompare(b);
+  }).map((region) => {
+    const group = byRegion[region];
+    const swatch = region === UNASSIGNED_REGION
+      ? '<span class="dot dot-unassigned"></span>'
+      : `<span class="dots">${group.slice(0, 4).map((route) => `<i style="background:${route.color}"></i>`).join("")}</span>`;
+    return `<label class="chip" title="${esc(plural(group.length, "route", "routes"))} in ${esc(regionLabel(region))}">
+      <input type="checkbox" data-region="${esc(region)}" ${state.regions[region] ? "checked" : ""}>
+      ${swatch}${esc(regionLabel(region))}<span class="n">${group.length}</span></label>`;
+  }).join("");
+}
+
+function listedRoutes() {
+  const counts = {};
+  state.shown.forEach((area) => { counts[area.route] = (counts[area.route] || 0) + 1; });
+  return Object.values(state.routes)
+    .filter((route) => counts[route.route_id])
+    .sort((a, b) => {
+      if (state.sort === "route") return a.route_id.localeCompare(b.route_id);
+      if (state.sort === "region") return a.region.localeCompare(b.region) || a.route_id.localeCompare(b.route_id);
+      if (state.sort === "approx") return b.approx / b.areas - a.approx / a.areas || b.areas - a.areas;
+      return b.areas - a.areas || a.route_id.localeCompare(b.route_id);
+    });
+}
+
+function renderRouteList(animate) {
+  const listed = listedRoutes();
+  el("routeCount").textContent = `(${listed.length})`;
+  const widest = Math.max(1, ...listed.map((route) => route.areas));
+  const list = el("routeList");
+  list.className = `list list-scroll${animate ? " animate" : ""}`;
+  list.innerHTML = listed.length ? listed.map((route) => {
+    const real = route.areas - route.approx;
+    const approx = route.approx ? ` · <span class="tag warn">${route.approx} approx.</span>` : "";
+    const who = route.specialist_id ? ` · <span class="tag">${esc(route.specialist_id)}</span>` : "";
+    return `
+    <button type="button" class="route-item" data-route="${esc(route.route_id)}" style="--c:${route.color}" title="Show ${esc(route.route_id)} on the map">
+      <span class="ri-top"><span class="dot"></span><span class="ri-id">${esc(route.route_id)}</span><span class="ri-n">${route.areas}</span></span>
+      <span class="ri-bar"><i style="width:${Math.round(100 * route.areas / widest)}%"></i></span>
+      <span class="ri-meta">${esc(regionLabel(route.region))}${who} · ${real} real${approx}</span>
+    </button>`;
+  }).join("") : '<div class="empty">No route matches the filters.</div>';
+  markActiveRoute();
+}
+
+function markActiveRoute() {
+  el("routeList").querySelectorAll(".route-item").forEach((item) => {
+    const active = item.dataset.route === state.selected;
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+}
+
+function renderSearchMessage() {
+  const msg = el("searchMsg");
+  if (!state.search) { msg.className = "msg"; msg.innerHTML = ""; return; }
+  const routes = new Set(state.shown.map((area) => area.route)).size;
+  if (state.shown.length) {
+    msg.className = "msg ok";
+    msg.innerHTML = `<b>${plural(state.shown.length, "area", "areas")}</b> on ${plural(routes, "route", "routes")} · <kbd>Enter</kbd> zooms to them`;
+  } else {
+    msg.className = "msg error";
+    msg.innerHTML = `Nothing matches “${esc(state.searchRaw)}”.`;
+  }
+}
+
+function renderLegend() {
+  el("legend").innerHTML = `
+    <div class="legend-row"><span class="sw sw-real"></span>Real outline (OpenStreetMap or IBGE)</div>
+    <div class="legend-row"><span class="sw sw-approx"></span>Approximated (Voronoi or parent area)</div>
+    <div class="legend-row"><span class="sw sw-city"></span>Whole municipality</div>
+    <div class="legend-row"><span class="sw sw-unassigned"></span>Unassigned route</div>
+    <div class="legend-row"><span class="sw sw-origin"></span>Specialist home base</div>
+    <div class="note">Colour is the route: routes of the same region get the most distinct colours
+      the palette allows. Hover an area for its name, click it for the details.</div>`;
+}
+
+function refresh({ animate = true, regions = false } = {}) {
+  drawLayers();
+  if (regions) renderRegions();
+  renderStats();
+  renderRouteList(animate);
+  renderSearchMessage();
+  if (state.selected && !routeOn(state.selected)) clearSelection();
+  scheduleLink();
+}
+
+/* ---------- link to the view ----------
+   The address keeps the view: #z=9&c=-27.1,-49.3&route=ROUTE-SOUTH-01
+   &off=COAST&hide=origins&q=centro&base=streets. Opening that link on any
+   copy of the map brings back the same area, route and filters. The theme
+   is not part of it: it is the preference of whoever opens it. */
+
+let linkTimer = null;
+
+function scheduleLink() {
+  if (!state.map) return;
+  clearTimeout(linkTimer);
+  linkTimer = setTimeout(writeLink, 350);
+}
+
+function linkHash() {
+  const center = state.map.getCenter();
+  const parts = [`z=${Math.round(state.map.getZoom() * 2) / 2}`, `c=${center.lat.toFixed(5)},${center.lng.toFixed(5)}`];
+  if (state.selected) parts.push(`route=${encodeURIComponent(state.selected)}`);
+  const off = Object.keys(state.regions).filter((region) => !state.regions[region]);
+  if (off.length) parts.push(`off=${off.map(encodeURIComponent).join(",")}`);
+  const hidden = Object.keys(state.layers).filter((layer) => !state.layers[layer]);
+  if (hidden.length) parts.push(`hide=${hidden.join(",")}`);
+  if (state.searchRaw) parts.push(`q=${encodeURIComponent(state.searchRaw)}`);
+  if (state.base !== "muted") parts.push(`base=${state.base}`);
+  return `#${parts.join("&")}`;
+}
+
+function writeLink() {
+  const hash = linkHash();
+  if (location.hash === hash) return;
+  try { history.replaceState(null, "", hash); } catch (error) {
+    try { location.replace(hash); } catch (ignored) { /* no writable address: no link */ }
+  }
+}
+
+function readLink() {
+  const raw = (location.hash || "").replace(/^#/, "");
+  if (!raw) return null;
+  const values = {};
+  raw.split("&").forEach((pair) => {
+    const i = pair.indexOf("=");
+    if (i > 0) values[pair.slice(0, i)] = pair.slice(i + 1);
+  });
+  const decode = (text) => { try { return decodeURIComponent(text); } catch (error) { return text; } };
+  const center = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(values.c || "");
+  const zoom = Number(values.z);
+  return {
+    center: center && Math.abs(+center[1]) <= 90 && Math.abs(+center[2]) <= 180 ? [+center[1], +center[2]] : null,
+    zoom: values.z && Number.isFinite(zoom) ? Math.min(19, Math.max(2, zoom)) : null,
+    route: values.route ? decode(values.route) : null,
+    off: values.off ? values.off.split(",").map(decode) : [],
+    hide: values.hide ? values.hide.split(",") : [],
+    q: values.q ? decode(values.q) : "",
+    base: BASEMAPS[values.base] ? values.base : "muted"
+  };
+}
+
+/* Puts the link into the controls, not only into the state, so the screen
+   shows what is in force. */
+function applyLink(link) {
+  link.off.forEach((region) => { if (region in state.regions) state.regions[region] = false; });
+  link.hide.forEach((layer) => { if (layer in state.layers) state.layers[layer] = false; });
+  document.querySelectorAll("input[data-layer]").forEach((input) => { input.checked = state.layers[input.dataset.layer]; });
+  if (link.q) {
+    el("search").value = link.q;
+    state.searchRaw = link.q;
+    state.search = norm(link.q);
+  }
+  state.base = link.base;
+  if (link.route && state.routes[link.route]) state.selected = link.route;
+}
+
+function copyLink() {
+  writeLink();
+  const url = location.href, button = el("btnCopyLink");
+  const done = (text) => {
+    button.textContent = text;
+    setTimeout(() => { button.textContent = "Copy link"; }, 1800);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(() => done("Link copied"), () => window.prompt("Copy the link to this view:", url));
+  } else {
+    window.prompt("Copy the link to this view:", url);
+  }
+}
+
+/* ---------- basemap and theme ---------- */
+
+function applyBase() {
+  state.map.getContainer().classList.toggle("base-muted", state.base === "muted");
+  document.querySelectorAll("#basePicker [data-base]").forEach((button) => {
+    const on = button.dataset.base === state.base;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
+function buildBasePicker() {
+  el("basePicker").innerHTML = Object.entries(BASEMAPS).map(([id, base]) =>
+    `<button type="button" class="seg" data-base="${id}" title="${base.title}" aria-pressed="false">${base.label}</button>`).join("");
+  el("basePicker").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-base]");
+    if (!button || button.dataset.base === state.base) return;
+    state.base = button.dataset.base;
+    applyBase();
+    scheduleLink();
+  });
+}
+
+function toggleTheme() {
+  const root = document.documentElement;
+  const next = root.dataset.theme === "light" ? "dark" : "light";
+  root.dataset.theme = next;
+  try { localStorage.setItem(THEME_KEY, next); } catch (error) { /* no storage: it just is not remembered */ }
+}
+
+/* ---------- wiring ---------- */
+
+function setPanelOpen(open) {
+  if (isNarrow()) document.body.classList.toggle("panel-open", open);
+  else el("app").classList.toggle("collapsed", !open);
+  el("btnPanel").setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function panelIsOpen() {
+  return isNarrow() ? document.body.classList.contains("panel-open") : !el("app").classList.contains("collapsed");
+}
+
+function showEverything() {
+  Object.keys(state.regions).forEach((region) => { state.regions[region] = true; });
+  Object.keys(state.layers).forEach((layer) => { state.layers[layer] = true; });
+  document.querySelectorAll("input[data-layer]").forEach((input) => { input.checked = true; });
+  el("search").value = "";
+  state.search = state.searchRaw = "";
+  refresh({ regions: true });
+}
+
+function wireControls() {
+  let searchTimer = null;
+  el("search").addEventListener("input", (event) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      state.searchRaw = event.target.value.trim();
+      state.search = norm(state.searchRaw);
+      refresh({ animate: false });
+    }, 120);
+  });
+  el("search").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && state.search && state.shown.length) {
+      flyTo(boundsOf(state.shown));
+      if (isNarrow()) setPanelOpen(false);
+    }
+  });
+
+  el("regionFilters").addEventListener("change", (event) => {
+    const input = event.target.closest("input[data-region]");
+    if (!input) return;
+    state.regions[input.dataset.region] = input.checked;
+    refresh();
+  });
+  el("btnAll").addEventListener("click", () => { Object.keys(state.regions).forEach((r) => { state.regions[r] = true; }); refresh({ regions: true }); });
+  el("btnNone").addEventListener("click", () => { Object.keys(state.regions).forEach((r) => { state.regions[r] = false; }); refresh({ regions: true }); });
+
+  document.querySelectorAll("input[data-layer]").forEach((input) => {
+    input.addEventListener("change", () => { state.layers[input.dataset.layer] = input.checked; refresh(); });
+  });
+
+  el("routeSort").addEventListener("change", (event) => { state.sort = event.target.value; renderRouteList(true); });
+  el("routeList").addEventListener("click", (event) => {
+    const item = event.target.closest(".route-item");
+    if (!item) return;
+    if (isNarrow()) setPanelOpen(false);
+    selectRoute(item.dataset.route, { zoom: true });
+  });
+
+  el("detail").addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act], [data-area]");
+    if (!target) return;
+    if (target.dataset.act === "close") return clearSelection();
+    if (target.dataset.act === "zoom-route") return zoomToRoute(state.selected);
+    const area = state.areas[Number(target.dataset.area)];
+    if (area) {
+      selectRoute(area.route, { area });
+      flyTo(boundsOf([area]));
+    }
+  });
+
+  el("btnPanel").addEventListener("click", () => setPanelOpen(!panelIsOpen()));
+  el("btnTheme").addEventListener("click", toggleTheme);
+  el("btnCopyLink").addEventListener("click", copyLink);
+  el("btnShowAll").addEventListener("click", showEverything);
+
+  state.map.on("click", () => {
+    if (isNarrow() && panelIsOpen()) setPanelOpen(false);
+    clearSelection();
+  });
+  state.map.on("moveend", scheduleLink);
+
+  document.addEventListener("keydown", (event) => {
+    const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName);
+    if (event.key === "Escape") {
+      if (event.target === el("search") && el("search").value) {
+        el("search").value = "";
+        el("search").dispatchEvent(new Event("input"));
+      } else if (!el("detail").hidden) {
+        clearSelection();
+      } else if (isNarrow() && panelIsOpen()) {
+        setPanelOpen(false);
+      }
+    } else if (event.key === "/" && !typing) {
+      event.preventDefault();
+      if (!panelIsOpen()) setPanelOpen(true);
+      el("search").focus();
+    }
+  });
+
+  /* The panel slides and the window resizes: Leaflet has to re-measure. */
+  if (window.ResizeObserver) new ResizeObserver(() => state.map.invalidateSize({ pan: false })).observe(el("map"));
+}
+
+const FitControl = L.Control.extend({
+  options: { position: "topleft" },
+  onAdd() {
+    const bar = L.DomUtil.create("div", "leaflet-bar leaflet-control");
+    const link = L.DomUtil.create("a", "", bar);
+    link.href = "#";
+    link.title = "Back to the whole coverage";
+    link.setAttribute("role", "button");
+    link.setAttribute("aria-label", "Back to the whole coverage");
+    link.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+    L.DomEvent.disableClickPropagation(bar);
+    L.DomEvent.on(link, "click", (event) => { L.DomEvent.preventDefault(event); fitAll(); });
+    return bar;
+  }
+});
 
 /* ---------- boot ---------- */
 
-function showMessage(html) {
-  el("loader").classList.remove("hidden");
-  el("loaderBody").innerHTML = `<div class="ld-msg">${html}</div>`;
+function fail(html) {
+  const boot = el("boot");
+  boot.classList.remove("leaving");
+  boot.classList.add("failed");
+  el("bootError").innerHTML = html;
+  el("bootError").hidden = false;
+}
+
+function leaveBoot() {
+  const boot = el("boot");
+  document.body.classList.add("ready");
+  boot.classList.add("leaving");
+  setTimeout(() => { if (boot.parentNode && !boot.classList.contains("failed")) boot.remove(); }, 700);
 }
 
 function start(data) {
   state.data = data;
   buildModel(data);
+  const link = readLink();
+  if (link) applyLink(link);
 
-  state.map = L.map("map", { zoomControl: true, preferCanvas: true }).setView([-15.8, -47.9], 4);
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png", {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    maxZoom: 19
-  }).addTo(state.map);
+  state.map = L.map("map", { zoomControl: true, minZoom: 2 }).setView([-15.8, -47.9], 4);
+  L.tileLayer(TILES.url, { subdomains: TILES.subdomains, maxZoom: 19, attribution: TILES.attribution }).addTo(state.map);
+  new FitControl().addTo(state.map);
   state.groups = {
     cities: L.layerGroup().addTo(state.map),
     districts: L.layerGroup().addTo(state.map),
     origins: L.layerGroup().addTo(state.map)
   };
+  state.allBounds = boundsOf(state.areas);
+  state.origins.forEach((origin) => state.allBounds.extend([origin.rec.latitude, origin.rec.longitude]));
 
-  el("search").oninput = (event) => { state.search = norm(event.target.value); refresh(); };
-  el("routeSort").onchange = (event) => { state.sort = event.target.value; renderSidebar(); };
-  el("btnSidebar").onclick = () => el("layout").classList.toggle("collapsed");
-  el("btnTheme").onclick = () => {
-    const root = document.documentElement;
-    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
-  };
-  el("btnReset").onclick = () => { if (state.initialBounds) state.map.fitBounds(state.initialBounds, { padding: [30, 30] }); };
-  el("btnSelectAll").onclick = () => { Object.keys(state.regions).forEach((r) => { state.regions[r] = true; }); refresh(); };
-  el("btnSelectNone").onclick = () => { Object.keys(state.regions).forEach((r) => { state.regions[r] = false; }); refresh(); };
-  document.querySelectorAll(".pill[data-layer]").forEach((pill) => {
-    pill.onclick = () => {
-      const layer = pill.dataset.layer;
-      state.layers[layer] = !state.layers[layer];
-      pill.classList.toggle("on", state.layers[layer]);
-      refresh();
-    };
-  });
+  buildBasePicker();
+  applyBase();
+  renderLegend();
+  wirePointer();
+  wireControls();
+  setPanelOpen(!isNarrow());
 
-  refresh();
-  el("loader").classList.add("hidden");
+  refresh({ regions: true });
+  /* The first view is set, not flown to: it appears as the boot screen fades. */
+  if (link && link.center && link.zoom != null) state.map.setView(link.center, link.zoom, { animate: false });
+  else fitAll(false);
+  if (state.selected) selectRoute(state.selected);
+
+  const generated = data.generated_at || "";
+  el("builtBadge").textContent = generated ? `Built ${generated.slice(0, 10)}` : "Built —";
+  el("footBuilt").textContent = generated ? `${generated.slice(0, 10)} ${generated.slice(11, 16)} UTC` : "—";
+  el("footAreas").textContent = fmt(state.areas.length);
+  el("footTime").textContent = `${Math.max(1, Math.round(performance.now() - state.t0))} ms`;
+  leaveBoot();
 }
 
 async function boot() {
+  state.t0 = performance.now();
   if (typeof L === "undefined") {
-    return showMessage("The map library did not load. If you opened this file from disk, re-download it — the standalone build embeds everything it needs.");
+    return fail("The map library did not load. If you opened this file from disk, download it again: the standalone build embeds everything it needs.");
   }
   let data = window.ROUTE_COVERAGE_DATA;
   if (!data) {
@@ -330,18 +974,22 @@ async function boot() {
       if (!response.ok) throw new Error(response.status);
       data = await response.json();
     } catch (error) {
-      return showMessage("No coverage payload found. Build the standalone file with <b>python -m route_coverage build --demo</b>, or place a <b>data.json</b> next to this page.");
+      return fail("No coverage payload found. Build the standalone file with <b>python -m route_coverage build --demo</b>, or place a <b>data.json</b> next to this page.");
     }
   }
   if (!data.districts && !data.cities) {
-    return showMessage("The payload has no coverage in it. Re-run the build.");
+    return fail("The payload has no coverage in it. Run the build again.");
   }
-  try {
-    start(data);
-  } catch (error) {
-    showMessage(`Failed to render the map: <b>${error.message}</b>.`);
-    console.error(error);
-  }
+  /* Draw after the boot screen has painted: parsing a large payload blocks
+     the page for a moment. */
+  requestAnimationFrame(() => setTimeout(() => {
+    try {
+      start(data);
+    } catch (error) {
+      fail(`Failed to render the map: <b>${esc(error.message)}</b>.`);
+      console.error(error);
+    }
+  }, 0));
 }
 
 boot();

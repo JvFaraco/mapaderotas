@@ -1,0 +1,2 @@
+88df0b5a7bc397dbc13a26bb8b3742cc62cd1c9b0dded57da7832416d6f52f42  inter-latin-wght.woff2
+bb2f90081933c0f2475883ca2c5cfee94e96d7314a09433fffc42e37f4cffd3b  montserrat-latin-wght.woff2

@@ -18,6 +18,9 @@ def test_demo_build_produces_a_self_contained_file(demo_map_html):
     assert 'src="./' not in demo_map_html
     assert "L.tileLayer" in demo_map_html  # the app code is inlined
     assert "Leaflet 1.9.4" in demo_map_html  # the vendored library is inlined
+    # The fonts travel inside the file, so it opens offline with its typography.
+    assert demo_map_html.count("data:font/woff2;base64,") == 2
+    assert 'url("./' not in demo_map_html
 
 
 def test_demo_payload_is_complete(demo_map_html):
@@ -47,6 +50,20 @@ def test_build_is_deterministic(tmp_path):
 def test_vendored_assets_match_their_checksums(project_root):
     verified = verify_vendor_checksums(project_root / "web")
     assert "vendor/leaflet/leaflet.js" in verified
+    assert "vendor/fonts/inter-latin-wght.woff2" in verified
+    assert "vendor/fonts/montserrat-latin-wght.woff2" in verified
+
+
+def test_a_stylesheet_url_that_cannot_be_inlined_fails_the_build(tmp_path):
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text(
+        '<!DOCTYPE html><link rel="stylesheet" href="./a.css">/*__PAYLOAD_START__*/null/*__PAYLOAD_END__*/',
+        encoding="utf-8",
+    )
+    (web / "a.css").write_text('body { background: url("./missing.png"); }', encoding="utf-8")
+    with pytest.raises(BundleError, match="not found: missing.png"):
+        render_standalone({}, web, tmp_path / "out.html")
 
 
 def test_a_tampered_vendor_file_fails_the_build(tmp_path, project_root):

@@ -1,0 +1,7 @@
+# Vendored assets are verified byte for byte against CHECKSUMS.txt on every
+# build, so git must never rewrite their line endings (core.autocrlf on
+# Windows would otherwise break the checksum on checkout).
+web/vendor/** -text
+*.woff2 binary
+*.png binary
+*.gif binary

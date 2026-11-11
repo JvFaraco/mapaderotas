@@ -2,96 +2,166 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
 <title>Route Coverage Map</title>
-<meta name="description" content="Route coverage map: districts, whole cities and specialist origins, rendered from a privacy-safe payload.">
+<meta name="description" content="Route coverage map: districts, whole cities and specialist home bases, rendered from a privacy-safe payload.">
+<meta name="theme-color" content="#07101d">
+<!-- Tab icon: a dashed route from a home base to a destination pin. Inline, so
+     the file stays self-contained. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0f14'/%3E%3Cpath d='M8.5 24c1-6 7-4.5 9.5-9s1.5-6.5 6-6.5' fill='none' stroke='%2326d7e8' stroke-width='2.3' stroke-linecap='round' stroke-dasharray='.1 4.4'/%3E%3Ccircle cx='8.5' cy='24' r='3.2' fill='%23F5B400'/%3E%3Cpath d='M24 2.8a4.6 4.6 0 0 0-4.6 4.6c0 3.5 4.6 8.2 4.6 8.2s4.6-4.7 4.6-8.2A4.6 4.6 0 0 0 24 2.8z' fill='%231687ff'/%3E%3Ccircle cx='24' cy='7.4' r='1.7' fill='%230b0f14'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="./fonts.css">
 <link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="./styles.css">
+<script>
+/* The saved theme is applied before the first paint, so a light-theme user
+   never sees a dark flash. Storage can be missing (private window, policy). */
+try {
+  var savedTheme = localStorage.getItem("route-coverage-theme");
+  if (savedTheme === "light" || savedTheme === "dark") document.documentElement.dataset.theme = savedTheme;
+} catch (e) { /* no storage: the default theme stays */ }
+</script>
 </head>
 <body>
 
+<div id="boot" class="boot" role="status" aria-live="polite">
+  <div class="boot-center">
+    <svg class="boot-route" viewBox="0 0 168 100" aria-hidden="true">
+      <path class="br-track" d="M16 82 C 50 84, 40 34, 84 44 S 124 14, 152 20"/>
+      <path class="br-trail" pathLength="1" d="M16 82 C 50 84, 40 34, 84 44 S 124 14, 152 20"/>
+      <circle class="br-ring" cx="16" cy="82" r="7"/>
+      <circle class="br-pin br-a" cx="16" cy="82" r="6"/>
+      <circle class="br-pin br-b" cx="84" cy="44" r="4.5"/>
+      <circle class="br-pin br-c" cx="152" cy="20" r="6"/>
+    </svg>
+    <div class="boot-title">Route <em>Coverage</em> Map</div>
+    <div class="boot-bar" aria-hidden="true"></div>
+    <div class="boot-sub" id="bootMsg">Reading the coverage payload</div>
+    <div class="boot-error" id="bootError" hidden></div>
+  </div>
+</div>
+
 <header class="header">
+  <span class="sheen" aria-hidden="true"></span>
   <div class="header-left">
-    <button class="icon-btn" id="btnSidebar" title="Toggle panel" aria-label="Toggle side panel">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    <button class="btn-icon" id="btnPanel" type="button" title="Show or hide the panel"
+            aria-label="Show or hide the side panel" aria-controls="panel" aria-expanded="true">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
     </button>
-    <div>
-      <div class="logo-name">Route Coverage Map</div>
-      <div class="logo-tag" id="datasetTag">coverage by route</div>
+    <div class="header-titles">
+      <h1 class="logo-name">Route <em>Coverage</em> Map</h1>
+      <div class="logo-tag">Who covers what · districts, whole cities and home bases</div>
     </div>
   </div>
   <div class="header-right">
-    <span class="badge" id="badgeRoutes">— routes</span>
-    <span class="badge" id="badgeCities">— cities</span>
-    <span class="badge" id="badgeDistricts">— districts</span>
-    <button class="icon-btn" id="btnTheme" title="Toggle light/dark theme" aria-label="Toggle theme">◐</button>
+    <span class="hbadge-built" id="builtBadge" title="When this map was built">Built —</span>
+    <span class="hbadge" title="The file carries technical identifiers only, and home bases are displaced about 100 m">Privacy-safe</span>
+    <button id="btnTheme" class="btn-icon" type="button" title="Switch between light and dark" aria-label="Switch theme">
+      <svg class="moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+      <svg class="sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    </button>
   </div>
 </header>
 
-<div class="layout" id="layout">
-  <aside class="sidebar" id="sidebar">
-    <section>
-      <input type="search" id="search" class="search-input" placeholder="Search route, city or district…" aria-label="Search coverage">
-    </section>
-
-    <section>
-      <div class="sb-title">Overview</div>
-      <div class="kpis">
-        <div class="kpi"><div class="v" id="kpiRoutes">—</div><div class="l">Routes</div></div>
-        <div class="kpi"><div class="v" id="kpiAreas">—</div><div class="l">Areas</div></div>
-        <div class="kpi"><div class="v" id="kpiReal">—</div><div class="l">Real</div></div>
-        <div class="kpi warn"><div class="v" id="kpiApprox">—</div><div class="l">Approx.</div></div>
+<div class="app" id="app">
+  <aside class="panel" id="panel" aria-label="Filters and routes">
+    <section class="card">
+      <h2>Find</h2>
+      <div class="search-field">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input type="search" id="search" class="field" autocomplete="off" spellcheck="false"
+               placeholder="Route, city, district or specialist" aria-label="Search the coverage">
       </div>
+      <div class="msg" id="searchMsg" role="status" aria-live="polite"></div>
     </section>
 
-    <section>
-      <div class="sb-title-row">
-        <div class="sb-title">Regions</div>
-        <div class="sb-actions">
-          <button type="button" class="sb-link" id="btnSelectAll">All</button>
-          <button type="button" class="sb-link" id="btnSelectNone">None</button>
+    <section class="card card-hero">
+      <h2>Coverage in view</h2>
+      <div class="total"><span id="kpiAreas">—</span> <small>covered areas</small></div>
+      <div class="mini-stats">
+        <div><b id="kpiRoutes">—</b><span>routes</span></div>
+        <div><b id="kpiCities">—</b><span>whole cities</span></div>
+        <div><b id="kpiDistricts">—</b><span>districts</span></div>
+        <div><b id="kpiOrigins">—</b><span>home bases</span></div>
+      </div>
+      <h3>Where each outline came from</h3>
+      <div id="sourceBars"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Regions</h2>
+        <div class="head-actions">
+          <button type="button" class="link-btn" id="btnAll">All</button>
+          <button type="button" class="link-btn" id="btnNone">None</button>
         </div>
       </div>
-      <div id="regionFilters"></div>
+      <div class="chips" id="regionFilters"></div>
     </section>
 
-    <section>
-      <div class="sb-title">Layers</div>
-      <div class="pill-row">
-        <button class="pill on" data-layer="cities">Whole cities</button>
-        <button class="pill on" data-layer="districts">Districts</button>
-        <button class="pill on" data-layer="origins">Specialist origins</button>
+    <section class="card">
+      <h2>Layers</h2>
+      <div class="chips">
+        <label class="chip"><input type="checkbox" data-layer="districts" checked><span class="dot dot-district"></span>Districts</label>
+        <label class="chip"><input type="checkbox" data-layer="cities" checked><span class="dot dot-city"></span>Whole cities</label>
+        <label class="chip"><input type="checkbox" data-layer="origins" checked><span class="dot dot-origin"></span>Home bases</label>
       </div>
     </section>
 
-    <section>
-      <div class="sb-title-row">
-        <div class="sb-title">Routes <span class="sb-count" id="routeCount"></span></div>
-        <select id="routeSort" class="sort-select" aria-label="Sort routes">
-          <option value="areas">By covered areas</option>
-          <option value="route">By route id</option>
-          <option value="region">By region</option>
+    <section class="card">
+      <div class="card-head">
+        <h2>Routes <span class="h2-count" id="routeCount"></span></h2>
+        <select id="routeSort" class="field field-sm" aria-label="Sort routes">
+          <option value="areas">Most areas</option>
+          <option value="route">Route id</option>
+          <option value="region">Region</option>
+          <option value="approx">Most approximated</option>
         </select>
       </div>
-      <div id="routeList"></div>
+      <div class="list list-scroll" id="routeList"></div>
     </section>
+
+    <section class="card">
+      <h2>How to read it</h2>
+      <div id="legend"></div>
+    </section>
+
+    <div class="note-box">
+      <strong>Privacy by construction</strong>
+      The file carries technical identifiers only: route, region and specialist
+      codes. Home bases are displaced about 100 m, so no published point is an
+      address.
+    </div>
+
+    <footer class="foot">
+      <span>Built <span id="footBuilt">—</span></span>
+      <span><span id="footAreas">—</span> areas in this file · drawn in <span id="footTime">—</span></span>
+      <span class="credits">Route Coverage Map · MIT ·
+        <a href="https://github.com/JvFaraco/mapaderotas" target="_blank" rel="noopener">source on GitHub</a></span>
+    </footer>
   </aside>
 
-  <main class="map-wrap">
-    <div id="map"></div>
-    <button class="reset-btn" id="btnReset" title="Back to the initial view" aria-label="Back to the initial view">⤢</button>
-    <div class="map-banner" id="mapBanner"></div>
-    <div class="legend" id="legend"></div>
-  </main>
-</div>
-
-<div class="loader" id="loader">
-  <div class="ld-card">
-    <div class="logo-name">Route Coverage Map</div>
-    <div class="logo-tag">loading coverage…</div>
-    <div id="loaderBody"><div class="spinner"></div></div>
+  <div class="stage" id="stage">
+    <main id="map" aria-label="Coverage map"></main>
+    <div class="tip" id="tip" aria-hidden="true"></div>
+    <div class="map-banner" id="mapBanner" role="status" hidden>
+      <span>No coverage matches the current filters.</span>
+      <button type="button" id="btnShowAll">Show everything</button>
+    </div>
+    <div class="hud" id="hud" aria-live="off">
+      <span class="hud-live"><b id="hudCount">—</b> areas shown</span>
+      <span class="hud-coord" id="hudCoord">—</span>
+      <span id="hudZoom">z —</span>
+      <button type="button" id="btnCopyLink" title="Copy a link that reopens this exact view: area, route and filters">Copy link</button>
+    </div>
+    <div class="detail" id="detail" role="dialog" aria-label="Details" hidden></div>
+    <div class="base-picker" id="basePicker" role="group" aria-label="Basemap"></div>
   </div>
 </div>
+
+<!-- Hatch patterns for approximated areas, one per route colour, created on
+     demand. A separate zero-size SVG: url(#id) references resolve across the
+     whole document, including Leaflet's own SVG. -->
+<svg id="patterns" width="0" height="0" aria-hidden="true" focusable="false"><defs></defs></svg>
 
 <script>
 /* Payload injected at build time. It stays null when the page is served from

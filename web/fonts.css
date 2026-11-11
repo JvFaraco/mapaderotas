@@ -1,0 +1,17 @@
+/* Inter (text) and Montserrat (titles, numbers): variable, latin subset, SIL
+   OFL 1.1 — see vendor/fonts/. The standalone build turns these relative URLs
+   into data: URIs, so the map still opens from disk with no font request. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./vendor/fonts/inter-latin-wght.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Montserrat";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./vendor/fonts/montserrat-latin-wght.woff2") format("woff2");
+}

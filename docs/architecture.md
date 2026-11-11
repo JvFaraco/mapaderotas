@@ -167,16 +167,28 @@ Design points:
 ## 6. Output
 
 One HTML file, opened by double-click: the audience has no Python and no local
-server. The bundler inlines `web/styles.css`, `web/map.js` and the vendored
-Leaflet into `web/index.html`, injects the payload between markers, and then
-verifies that no local asset reference survived — if one did, the file would
-not be self-contained and the build fails.
+server. The bundler inlines the stylesheets, `web/map.js` and the vendored
+Leaflet into `web/index.html`, turns every relative `url(./…)` inside a
+stylesheet into a `data:` URI (that is how the fonts travel), injects the
+payload between markers, and then verifies that no local asset reference
+survived — if one did, the file would not be self-contained and the build
+fails.
 
-Leaflet is vendored rather than downloaded at build time (with SHA-256
-checksums verified on every build) so that the build has no network
-dependency and the exact bytes shipped in every map are auditable in the
-repository. `tools/vendor_leaflet.py` refreshes it from the npm registry when
-the version is bumped.
+Leaflet and the two fonts (Inter and Montserrat, SIL OFL) are vendored rather
+than downloaded at build time, with SHA-256 checksums verified on every build,
+so that the build has no network dependency and the exact bytes shipped in
+every map are auditable in the repository. `tools/vendor_leaflet.py` refreshes
+Leaflet from the npm registry when the version is bumped. `.gitattributes`
+marks `web/vendor/` as non-text, so a Windows checkout with `core.autocrlf`
+cannot rewrite line endings and break the checksums.
+
+The page itself (`web/map.js`) draws with Leaflet's SVG renderer, which is
+what allows the approximations to be filled with an SVG hatch pattern and the
+selected route to be outlined with a moving dash in CSS. Every value from the
+payload goes through an HTML escape before reaching `innerHTML`. The view is
+kept in the address (`#z=…&c=…&route=…&off=…&hide=…&q=…&base=…`), so a copied
+link reopens the same area, route and filters; the theme is a per-viewer
+preference kept in `localStorage`, and the page works without it.
 
 Coordinates are rounded to five decimals (~1 m) before serialisation, which
 costs nothing visually and cuts a large share of the payload. Because that
@@ -197,9 +209,12 @@ Tests are organised by invariant rather than by file:
 | `test_geocoding_providers.py` | Adapter contracts against mocked HTTP/geopy. |
 | `test_overlap_clipping.py` | No two specialists share area, before and after a full build. |
 | `test_privacy.py` | Nothing private survives, even from a deliberately polluted cache. |
-| `test_build_standalone.py` | Self-contained, deterministic, checksum-verified output. |
+| `test_build_standalone.py` | Self-contained, deterministic, checksum-verified output, fonts included. |
+| `test_ui_smoke.py` | In a real browser: clean boot, hover and detail card, link round-trip, empty-search recovery, phone layout, names rendered as text. |
 
-Everything runs offline, on synthetic fixtures.
+Everything runs offline, on synthetic fixtures. The browser tests answer tile
+requests locally and are skipped where Playwright is not installed; CI runs
+them in a separate job.
 
 ## 8. Known limitations
 
@@ -209,4 +224,5 @@ Everything runs offline, on synthetic fixtures.
   method, matched name, score and near misses so a human can audit it.
 - Nominatim's ~1 request/second policy makes the first run over a large
   territory slow. Everything after that comes from the cache.
-- Basemap tiles are still fetched from the network at view time.
+- Basemap tiles (OpenStreetMap) are still fetched from the network at view
+  time; without network the coverage draws over a blank background.
