@@ -187,8 +187,18 @@ what allows the approximations to be filled with an SVG hatch pattern and the
 selected route to be outlined with a moving dash in CSS. Every value from the
 payload goes through an HTML escape before reaching `innerHTML`. The view is
 kept in the address (`#z=…&c=…&route=…&off=…&hide=…&q=…&base=…`), so a copied
-link reopens the same area, route and filters; the theme is a per-viewer
-preference kept in `localStorage`, and the page works without it.
+link reopens the same area, route and filters. The theme is not part of the
+link: it follows the system (`prefers-color-scheme`, applied before the first
+paint) until the viewer picks one, which is then kept in `localStorage`; the
+page works without storage.
+
+Motion follows a few rules, enforced by the browser tests: only transform and
+opacity animate (collapsing the desktop panel floats it over the map and
+resizes the map once, instead of animating its width); nothing that starts on
+its own moves for more than five seconds (WCAG 2.2.2); a card opened from the
+keyboard takes the focus and gives it back when it closes; and with
+`prefers-reduced-motion` nothing moves at all. Durations, curves and layers
+are CSS tokens (`--duration-*`, `--ease*`, `--z-*`).
 
 Coordinates are rounded to five decimals (~1 m) before serialisation, which
 costs nothing visually and cuts a large share of the payload. Because that
@@ -210,7 +220,8 @@ Tests are organised by invariant rather than by file:
 | `test_overlap_clipping.py` | No two specialists share area, before and after a full build. |
 | `test_privacy.py` | Nothing private survives, even from a deliberately polluted cache. |
 | `test_build_standalone.py` | Self-contained, deterministic, checksum-verified output, fonts included. |
-| `test_ui_smoke.py` | In a real browser: clean boot, hover and detail card, link round-trip, empty-search recovery, phone layout, names rendered as text. |
+| `test_ui_smoke.py` | In a real browser: clean boot, hover and detail card, link round-trip, empty-search recovery, phone layout and drawer, keyboard focus in and out of the card, route preview from the list, a still map when the panel collapses, theme from the system, decorative motion under five seconds, names rendered as text. |
+| `test_contrast.py` | Every text colour keeps WCAG AA (4.5:1) on the surfaces it sits on, in both themes, read from the CSS tokens. |
 
 Everything runs offline, on synthetic fixtures. The browser tests answer tile
 requests locally and are skipped where Playwright is not installed; CI runs

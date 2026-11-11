@@ -13,12 +13,18 @@
 <link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="./styles.css">
 <script>
-/* The saved theme is applied before the first paint, so a light-theme user
-   never sees a dark flash. Storage can be missing (private window, policy). */
-try {
-  var savedTheme = localStorage.getItem("route-coverage-theme");
-  if (savedTheme === "light" || savedTheme === "dark") document.documentElement.dataset.theme = savedTheme;
-} catch (e) { /* no storage: the default theme stays */ }
+/* The theme is set before the first paint, so nobody sees a flash of the
+   other one: the viewer's saved choice if there is one, otherwise the system's
+   (dark when the system says nothing). Storage can be missing (private
+   window, policy): then the system decides. */
+(function () {
+  var theme = null;
+  try { theme = localStorage.getItem("route-coverage-theme"); } catch (e) { /* no storage */ }
+  if (theme !== "light" && theme !== "dark") {
+    theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  }
+  document.documentElement.dataset.theme = theme;
+})();
 </script>
 </head>
 <body>
@@ -139,6 +145,7 @@ try {
         <a href="https://github.com/JvFaraco/mapaderotas" target="_blank" rel="noopener">source on GitHub</a></span>
     </footer>
   </aside>
+  <div class="scrim" id="scrim" aria-hidden="true"></div>
 
   <div class="stage" id="stage">
     <main id="map" aria-label="Coverage map"></main>
@@ -153,7 +160,7 @@ try {
       <span id="hudZoom">z —</span>
       <button type="button" id="btnCopyLink" title="Copy a link that reopens this exact view: area, route and filters">Copy link</button>
     </div>
-    <div class="detail" id="detail" role="dialog" aria-label="Details" hidden></div>
+    <div class="detail" id="detail" role="dialog" aria-labelledby="detailTitle" hidden></div>
     <div class="base-picker" id="basePicker" role="group" aria-label="Basemap"></div>
   </div>
 </div>

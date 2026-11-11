@@ -59,7 +59,7 @@ Numbers from the demo dataset (`dist/stats.json`, produced by every build):
 | Real outlines vs approximations | 21 vs 15 (16 before one was fully covered) |
 | Overlaps clipped | 6 polygons cut, 1 fully covered and dropped |
 | Cache reuse on a second run | 100% (no provider call repeated) |
-| Standalone map size | 0.38 MB, Leaflet and fonts included |
+| Standalone map size | 0.39 MB, Leaflet and fonts included |
 | Build time (demo, cold) | ~0.2 s |
 | Test coverage | 83% |
 
@@ -90,11 +90,17 @@ Numbers from the demo dataset (`dist/stats.json`, produced by every build):
 - **A map that says what it knows.** Real outlines are solid, approximations
   are hatched with a dashed edge, whole municipalities are pale with a dashed
   edge, and a click on any area says where its outline came from (and why, when
-  it is an approximation). Selecting a route dims the others and pulses its
-  home base; the address bar keeps the view (area, route, filters, basemap),
-  so a link reopens exactly what was on screen. Dark and light themes,
-  keyboard shortcuts (`/` to search, `Esc` to clear) and no motion for anyone
-  who asked the OS for less.
+  it is an approximation). Hovering a route in the list lights it up on the
+  map; selecting it dims the others and pulses its home base. The address bar
+  keeps the view (area, route, filters, basemap), so a link reopens exactly
+  what was on screen. Dark and light themes that follow the system until the
+  viewer picks one, keyboard shortcuts (`/` to search, `Esc` to clear) with
+  the focus going into the detail card and back, and no motion for anyone who
+  asked the OS for less; decorative motion never loops.
+- **Accessible by test, not by intention.** Every text colour is checked
+  against WCAG AA (4.5:1) in both themes straight from the CSS tokens, and the
+  browser tests check focus handling, touch targets and that nothing moves on
+  its own for more than five seconds.
 
 ## Architecture
 
@@ -222,9 +228,12 @@ self-contained, deterministic, overlap-free and free of personal data.
 `tests/test_ui_smoke.py` opens the built map in a real browser (Playwright,
 skipped when it is not installed): it boots with no console error, hover and
 click work on real outlines and approximations, a copied link reopens the same
-view, an empty search offers a way back, the phone layout fits, and names from
-the spreadsheet are rendered as text, never as HTML. Tiles are answered
-locally, so it needs no network either.
+view, an empty search offers a way back, the phone layout fits, the keyboard
+goes into the detail card and back, decorative motion stops within five
+seconds, and names from the spreadsheet are rendered as text, never as HTML.
+Tiles are answered locally, so it needs no network either.
+`tests/test_contrast.py` checks every text/surface pair of both themes against
+WCAG AA, reading the colours from `web/styles.css`.
 
 ```bash
 pip install playwright && python -m playwright install chromium

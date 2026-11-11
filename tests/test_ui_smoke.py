@@ -47,10 +47,19 @@ def open_map(browser):
     """Opens a map file and returns (page, console problems)."""
     contexts = []
 
-    def _open(path: Path, *, width: int = 1440, height: int = 900, hash_: str = "", reduced_motion: bool = True):
+    def _open(
+        path: Path,
+        *,
+        width: int = 1440,
+        height: int = 900,
+        hash_: str = "",
+        reduced_motion: bool = True,
+        color_scheme: str = "dark",
+    ):
         context = browser.new_context(
             viewport={"width": width, "height": height},
             reduced_motion="reduce" if reduced_motion else "no-preference",
+            color_scheme=color_scheme,
         )
         contexts.append(context)
         context.route(
@@ -185,6 +194,79 @@ def test_the_theme_choice_survives_a_reload(demo_map, open_map):
     assert page.evaluate("document.documentElement.dataset.theme") == "light"
 
 
+@pytest.mark.parametrize("system", ["light", "dark"])
+def test_a_first_visit_follows_the_system_theme(demo_map, open_map, system):
+    page, _ = open_map(demo_map, color_scheme=system)
+    assert page.evaluate("document.documentElement.dataset.theme") == system
+    # A choice made with the button beats the system from then on.
+    page.locator("#btnTheme").click()
+    page.reload()
+    page.wait_for_function("document.body.classList.contains('ready')")
+    assert page.evaluate("document.documentElement.dataset.theme") != system
+
+
+def test_the_keyboard_goes_into_the_card_and_back(demo_map, open_map):
+    page, problems = open_map(demo_map)
+    item = page.locator("#routeList .route-item").first
+    route_id = item.get_attribute("data-route")
+    item.focus()
+    page.keyboard.press("Enter")
+    sync_api.expect(page.locator("#detail")).to_be_visible()
+    assert page.evaluate("document.activeElement.id") == "detailTitle"
+    assert page.locator("#detail").get_attribute("aria-labelledby") == "detailTitle"
+
+    page.keyboard.press("Escape")
+    sync_api.expect(page.locator("#detail")).to_be_hidden()
+    assert page.evaluate("document.activeElement.dataset.route") == route_id
+    assert problems == []
+
+
+def test_decorative_motion_stops_by_itself(demo_map, open_map):
+    """WCAG 2.2.2: nothing that starts on its own may move for over 5 s."""
+    page, problems = open_map(demo_map, reduced_motion=False)
+    page.wait_for_function("!document.getElementById('boot')")
+    timings = page.evaluate(
+        "document.getAnimations().map((a) => ({ name: a.animationName || 'waapi',"
+        " end: a.effect.getComputedTiming().endTime }))"
+    )
+    assert timings, "the opening animations did not run"
+    assert all(timing["end"] <= 5000 for timing in timings), timings
+    assert problems == []
+
+
+def test_hovering_a_route_in_the_list_lights_it_up(demo_map, open_map):
+    page, problems = open_map(demo_map)
+    item = page.locator("#routeList .route-item").nth(1)
+    route_id = item.get_attribute("data-route")
+    other_opacity = (
+        "(r) => state.shown.find((a) => a.route !== r && !a.approx && a.kind === 'district')"
+        ".layer.getLayers()[0].getElement().getAttribute('stroke-opacity')"
+    )
+    before = float(page.evaluate(other_opacity, route_id))
+    item.hover()
+    assert float(page.evaluate(other_opacity, route_id)) < before  # the other routes dim
+    page.mouse.move(900, 450)  # back over the map
+    page.wait_for_function(f"(() => {{ const f = {other_opacity}; return +f({route_id!r}) === {before}; }})()")
+    assert page.locator("#detail").is_hidden()  # a preview is not a selection
+    assert problems == []
+
+
+def test_collapsing_the_panel_does_not_move_the_map(demo_map, open_map):
+    page, problems = open_map(demo_map)
+    position = "(() => { const r = state.shown[5].layer.getLayers()[0].getElement().getBoundingClientRect();" \
+               " return [Math.round(r.left), Math.round(r.top)]; })()"
+    before = page.evaluate(position)
+    page.locator("#btnPanel").click()
+    page.wait_for_function("getComputedStyle(document.getElementById('panel')).visibility === 'hidden'")
+    assert page.evaluate("document.getElementById('map').offsetWidth") == 1440
+    assert page.evaluate(position) == before
+    page.locator("#btnPanel").click()
+    page.wait_for_function("!document.getElementById('app').classList.contains('panel-floating')")
+    assert page.evaluate(position) == before
+    assert page.locator("#btnPanel").get_attribute("aria-expanded") == "true"
+    assert problems == []
+
+
 def test_phone_layout_fits_and_the_panel_is_a_drawer(demo_map, open_map):
     page, problems = open_map(demo_map, width=375, height=812)
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
@@ -196,6 +278,14 @@ def test_phone_layout_fits_and_the_panel_is_a_drawer(demo_map, open_map):
     page.locator("#routeList .route-item").first.click()
     page.wait_for_function("document.getElementById('panel').getBoundingClientRect().right <= 0")
     sync_api.expect(page.locator("#detail")).to_be_visible()
+    # iOS zooms into fields under 16 px.
+    assert page.evaluate("getComputedStyle(document.getElementById('search')).fontSize") == "16px"
+    # A tap on the dimmed map beside the open drawer closes it.
+    page.locator("#btnPanel").click()
+    page.wait_for_function("document.getElementById('panel').getBoundingClientRect().left >= 0")
+    page.mouse.click(365, 400)
+    page.wait_for_function("document.getElementById('panel').getBoundingClientRect().right <= 0")
+    assert page.evaluate("getComputedStyle(document.getElementById('panel')).visibility") == "hidden"
     assert problems == []
 
 

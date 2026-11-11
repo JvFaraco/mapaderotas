@@ -16,6 +16,9 @@
   --bg: #0b0f14; --bg2: #0f1520; --card: #151c29; --card2: #1b2435;
   --border: rgba(255, 255, 255, .07); --border2: rgba(255, 255, 255, .14);
   --text: #e8edf5; --muted: #8494aa; --faint: #3d4d60;
+  /* Orange as text (tags, alerts) on its own tint: a step lighter than the
+     orange of fills, so small type keeps 4.5:1. */
+  --warn-text: #f3a83a;
   --shadow: 0 4px 24px rgba(0, 0, 0, .45);
   --shadow-lg: 0 10px 48px rgba(0, 0, 0, .6);
   --glass: rgba(17, 24, 36, .8);
@@ -27,26 +30,37 @@
      colours carry the picture. */
   --tile-filter: invert(1) hue-rotate(185deg) saturate(.3) brightness(.66) contrast(1.08);
   --tile-opacity: .82;
-  /* One duration for clicks (above ~200 ms a click feels slow), a soft curve
-     for what slides and a spring for what pops in. */
-  --fast: 160ms;
-  --ease: cubic-bezier(.2, .8, .2, 1);
-  --spring: cubic-bezier(.34, 1.28, .64, 1);
+  /* Motion: four durations and three curves, nothing else. Clicks answer in
+     --duration-fast (above ~200 ms a click feels slow); panels and cards move
+     in --duration-base; entrances take --duration-slow; only the page reveal
+     uses --duration-reveal. Exits run at ~75% of their entrance. */
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 400ms;
+  --duration-reveal: 600ms;
+  --ease: cubic-bezier(.2, .8, .2, 1);         /* what slides or settles */
+  --ease-in: cubic-bezier(.4, 0, 1, 1);        /* what leaves */
+  --spring: cubic-bezier(.34, 1.28, .64, 1);   /* what pops in */
+  /* Layers, bottom to top. */
+  --z-map: 0; --z-overlay: 3; --z-detail: 4; --z-scrim: 1001; --z-drawer: 1002; --z-header: 1100; --z-boot: 5000;
   --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-display: "Montserrat", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
   color-scheme: dark;
 }
 /* Light: the same hues, darker, because a bright amber or cyan disappears on
-   white. */
+   white. Cyan and muted are a step darker still than the sister project's:
+   used as small text on the tinted panels they measured 3.6–4.3:1, and WCAG
+   AA asks 4.5. */
 :root[data-theme="light"] {
-  --blue: #005bac; --cyan: #00869a; --amber: #a37600; --green: #1f8a4c;
+  --blue: #005bac; --cyan: #006f80; --amber: #a37600; --green: #1f8a4c;
   --red: #c83737; --purple: #7c3aed; --orange: #b06500;
   --blue-dim: rgba(0, 91, 172, .1); --blue-glow: rgba(0, 91, 172, .28);
-  --cyan-dim: rgba(0, 134, 154, .1);
+  --cyan-dim: rgba(0, 111, 128, .1);
   --bg: #eef3f9; --bg2: #e6ecf5; --card: #ffffff; --card2: #f4f7fc;
   --border: rgba(0, 91, 172, .1); --border2: rgba(0, 91, 172, .2);
-  --text: #0d1a2e; --muted: #55698a; --faint: #b0bfcf;
+  --text: #0d1a2e; --muted: #4d6080; --faint: #b0bfcf;
+  --warn-text: #8a4f00;
   --shadow: 0 4px 24px rgba(0, 91, 172, .08);
   --shadow-lg: 0 10px 48px rgba(0, 91, 172, .16);
   --glass: rgba(255, 255, 255, .86);
@@ -77,7 +91,7 @@ body {
   font: 14px/1.5 var(--font);
   font-feature-settings: "cv11", "ss03";
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
-  transition: background-color .25s ease, color .25s ease;
+  transition: background-color var(--duration-base) var(--ease), color var(--duration-base) var(--ease);
 }
 button, input, select { font: inherit; color: inherit; }
 h1, h2, h3 { margin: 0; }
@@ -86,13 +100,13 @@ h1, h2, h3 { margin: 0; }
    Stays up while the payload is parsed and the layers are drawn, then fades
    out. A route draws itself between three stops in the meantime. */
 .boot {
-  position: fixed; inset: 0; z-index: 5000;
+  position: fixed; inset: 0; z-index: var(--z-boot);
   display: grid; place-items: center; padding: 20px;
   background:
     radial-gradient(circle at 50% 42%, rgba(22, 135, 255, .18), transparent 32rem),
     radial-gradient(circle at 80% 90%, rgba(38, 215, 232, .08), transparent 26rem),
     var(--bg);
-  transition: opacity .6s var(--ease), transform .6s var(--ease), visibility 0s linear .6s;
+  transition: opacity var(--duration-reveal) var(--ease), transform var(--duration-reveal) var(--ease), visibility 0s linear var(--duration-reveal);
 }
 .boot.leaving { opacity: 0; transform: scale(1.03); visibility: hidden; }
 .boot-center { display: flex; flex-direction: column; align-items: center; gap: 20px; max-width: 440px; text-align: center; }
@@ -124,7 +138,12 @@ h1, h2, h3 { margin: 0; }
 
 /* ------------------------------------------------------------ HEADER
    Dark bar with a blue glow and the blue → cyan → amber rule underneath, the
-   same in both themes. A sheen crosses it slowly, every few seconds. */
+   same in both themes. A sheen crosses it once, as the map opens.
+
+   Decorative motion never loops: anything that starts on its own stops within
+   five seconds (WCAG 2.2.2). What keeps moving — the selected route's dashes
+   and its home base's pulse — was started by the user and stops with the
+   selection. */
 .header {
   flex: 0 0 var(--top); height: var(--top);
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -133,7 +152,7 @@ h1, h2, h3 { margin: 0; }
     radial-gradient(circle at 8% -60%, rgba(22, 135, 255, .45), transparent 42%),
     radial-gradient(circle at 92% 160%, rgba(38, 215, 232, .18), transparent 40%),
     linear-gradient(105deg, #07101d 0%, #0b1a30 52%, #081321 100%);
-  position: relative; z-index: 1100; isolation: isolate; overflow: hidden;
+  position: relative; z-index: var(--z-header); isolation: isolate; overflow: hidden;
   border-bottom: 1px solid rgba(255, 255, 255, .08);
   box-shadow: 0 8px 28px rgba(0, 10, 25, .35), inset 0 1px rgba(255, 255, 255, .06);
 }
@@ -151,8 +170,8 @@ h1, h2, h3 { margin: 0; }
 .sheen {
   position: absolute; z-index: -1; top: 0; bottom: 0; left: -40%; width: 40%; pointer-events: none;
   background: linear-gradient(105deg, transparent, rgba(255, 255, 255, .09), transparent);
-  animation: sheen 9s ease-in-out 1.5s infinite;
 }
+.ready .sheen { animation: sheen 1.8s var(--ease) .5s 1 both; }
 .header-left { display: flex; align-items: center; gap: 13px; min-width: 0; }
 .header-titles { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .logo-name {
@@ -165,7 +184,7 @@ h1, h2, h3 { margin: 0; }
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .logo-tag {
-  font: 750 9.5px/1.15 var(--font-display); color: rgba(255, 255, 255, .7);
+  font: 750 10px/1.15 var(--font-display); color: rgba(255, 255, 255, .72);
   letter-spacing: 1.45px; text-transform: uppercase;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -177,7 +196,8 @@ h1, h2, h3 { margin: 0; }
   background: linear-gradient(135deg, #ffd34d, #f5b400); color: #0d1a2e;
   box-shadow: 0 4px 14px rgba(245, 180, 0, .22), inset 0 1px rgba(255, 255, 255, .55);
 }
-.hbadge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #0d1a2e; animation: blink 2.4s ease-in-out infinite; }
+.hbadge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #0d1a2e; }
+.ready .hbadge::before { animation: blink 1.2s ease-in-out .4s 3; }
 .hbadge-built {
   padding: 4px 11px; border-radius: 999px; white-space: nowrap;
   font: 600 11px/1.3 var(--font-display); letter-spacing: .2px;
@@ -189,12 +209,12 @@ h1, h2, h3 { margin: 0; }
   background: rgba(255, 255, 255, .11); border: 1px solid rgba(255, 255, 255, .22);
   cursor: pointer; display: flex; align-items: center; justify-content: center; color: #fff;
   box-shadow: inset 0 1px rgba(255, 255, 255, .08);
-  transition: transform .18s var(--ease), background-color .18s, box-shadow .18s;
+  transition: transform var(--duration-fast) var(--ease), background-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease);
 }
 .btn-icon:hover { background: rgba(255, 255, 255, .22); transform: translateY(-2px); box-shadow: 0 7px 18px rgba(0, 29, 63, .2); }
 .btn-icon:active { transform: scale(.94); }
 .btn-icon:focus-visible { outline: 2px solid #f5b400; outline-offset: 2px; }
-#btnTheme svg { transition: transform .35s var(--spring); }
+#btnTheme svg { transition: transform var(--duration-slow) var(--spring); }
 #btnTheme .moon { display: none; }
 :root[data-theme="light"] #btnTheme .moon { display: block; }
 :root[data-theme="light"] #btnTheme .sun { display: none; }
@@ -217,23 +237,33 @@ h1, h2, h3 { margin: 0; }
   padding: 16px 13px 16px 15px;
   display: flex; flex-direction: column; gap: 12px;
   position: relative; z-index: 2;
-  transition: margin-left .26s var(--ease), opacity .2s ease;
+  transition: transform var(--duration-base) var(--ease), opacity var(--duration-base) var(--ease), visibility 0s;
 }
 .panel > * { flex-shrink: 0; }
-.app.collapsed .panel { margin-left: calc(-1 * var(--panel)); opacity: 0; pointer-events: none; }
+@media (min-width: 781px) {
+  /* Collapsing on a desktop: the panel leaves the layout at once (the map is
+     resized a single time, see slidePanel in map.js) and slides away over the
+     map with transform only. Hidden, it is also out of the Tab order. */
+  .app.panel-floating .panel { position: absolute; inset: 0 auto 0 0; z-index: 5; box-shadow: var(--shadow-lg); }
+  .app.collapsed .panel {
+    transform: translateX(-100%); opacity: 0; visibility: hidden; pointer-events: none;
+    transition: transform var(--duration-base) var(--ease), opacity var(--duration-base) var(--ease),
+                visibility 0s linear var(--duration-base);
+  }
+}
 
 .card {
   position: relative; overflow: hidden;
   background: linear-gradient(160deg, var(--card), color-mix(in srgb, var(--card) 94%, var(--blue)));
   border: 1px solid var(--border); border-radius: var(--r);
   padding: 14px;
-  transition: border-color .25s, box-shadow .25s;
+  transition: border-color var(--duration-base) var(--ease), box-shadow var(--duration-base) var(--ease);
 }
 /* The rule sweeps in from the left on hover. */
 .card::before {
   content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
   background: var(--rule);
-  transform: scaleX(0); transform-origin: left; transition: transform .45s var(--ease);
+  transform: scaleX(0); transform-origin: left; transition: transform var(--duration-slow) var(--ease);
 }
 .card:hover { border-color: color-mix(in srgb, var(--blue) 30%, var(--border2)); box-shadow: var(--shadow); }
 .card:hover::before { transform: scaleX(1); }
@@ -251,17 +281,19 @@ h1, h2, h3 { margin: 0; }
 .card h2::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--border2), transparent); }
 .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
 .card-head h2 { flex: 1; margin: 0; min-width: 0; }
-.head-actions { display: flex; gap: 10px; flex: 0 0 auto; }
+.head-actions { display: flex; gap: 14px; flex: 0 0 auto; }
 .h2-count { font-weight: 700; letter-spacing: 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* The padding gives a 24 px touch target (WCAG 2.5.8); the negative margin
+   keeps the drawing exactly where it was. */
 .link-btn {
-  background: none; border: none; padding: 0; cursor: pointer;
+  background: none; border: none; padding: 4px 6px; margin: -4px -6px; min-height: 24px; border-radius: 6px; cursor: pointer;
   color: var(--cyan); font-size: 10.5px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase;
 }
 .link-btn:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 .card h3 { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 16px 0 8px; }
 
 /* The coverage card is the answer of the page: highlighted, with a scan line
-   that sweeps down every few seconds. */
+   that sweeps down it once when the map opens. */
 .card-hero {
   border-color: color-mix(in srgb, var(--cyan) 40%, transparent);
   background: linear-gradient(140deg, var(--card), color-mix(in srgb, var(--cyan) 9%, var(--card)));
@@ -271,8 +303,8 @@ h1, h2, h3 { margin: 0; }
 .card-hero::after {
   content: ""; position: absolute; left: 0; right: 0; top: -40%; height: 40%; pointer-events: none;
   background: linear-gradient(180deg, transparent, rgba(38, 215, 232, .07), transparent);
-  animation: scan 4.5s ease-in-out infinite;
 }
+.ready .card-hero::after { animation: scan 2.4s var(--ease) .7s 1 both; }
 .card-hero h2 { color: var(--cyan); }
 
 /* ------------------------------------------------------------ FIELDS */
@@ -282,7 +314,7 @@ h1, h2, h3 { margin: 0; }
   width: 100%; padding: 9px 12px;
   border: 1px solid var(--border2); border-radius: var(--rsm);
   background: var(--card2); color: var(--text); font-size: 13.5px;
-  transition: border-color var(--fast), box-shadow var(--fast), background-color var(--fast);
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast), background-color var(--duration-fast);
 }
 .search-field .field { padding-left: 34px; }
 .field::placeholder { color: var(--muted); opacity: .85; }
@@ -327,7 +359,9 @@ select.field-sm { background-position: right 8px center; }
   border-radius: var(--rsm); background: var(--card2); box-shadow: inset 0 0 0 1px var(--border);
 }
 .mini-stats b { font: 800 16px/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
-.mini-stats span { font-size: 9.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; color: var(--muted); line-height: 1.2; }
+/* Lower case, like "covered areas" beside the total: at a legible 11 px the
+   uppercase "DISTRICTS" no longer fits a quarter of the card. */
+.mini-stats span { font-size: 11px; font-weight: 600; color: var(--muted); line-height: 1.2; }
 
 .bar-row { display: grid; grid-template-columns: minmax(0, 1fr) 84px 24px; align-items: center; gap: 9px; margin-bottom: 6px; font-size: 12px; font-weight: 600; }
 .bar-label { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -336,7 +370,7 @@ select.field-sm { background-position: right 8px center; }
 /* The bar grows from zero on every filter (transform only: no layout). */
 .bar-fill {
   display: block; height: 100%; border-radius: 99px; position: relative;
-  transform-origin: left center; animation: grow .7s var(--ease) both;
+  transform-origin: left center; animation: grow var(--duration-reveal) var(--ease) both;
 }
 .bar-fill::after {
   content: ""; position: absolute; inset: 0; border-radius: inherit;
@@ -376,7 +410,7 @@ select.field-sm { background-position: right 8px center; }
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 30%, transparent), 0 0 14px rgba(22, 135, 255, .12);
 }
 .chip:has(input:focus-visible) { outline: 2px solid var(--blue); outline-offset: 2px; }
-.chip .dot, .chip .dots { transition: opacity var(--fast), transform .3s var(--spring); }
+.chip .dot, .chip .dots { transition: opacity var(--duration-fast), transform var(--duration-base) var(--spring); }
 .chip:not(:has(input:checked)) .dot, .chip:not(:has(input:checked)) .dots { opacity: .3; transform: scale(.8); }
 .chip .n { color: var(--muted); font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
@@ -410,17 +444,22 @@ select.field-sm { background-position: right 8px center; }
 .ri-id { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ri-n { font: 800 12.5px/1 var(--font-display); font-variant-numeric: tabular-nums; }
 .ri-bar { display: block; height: 3px; border-radius: 99px; background: var(--border); margin-top: 7px; overflow: hidden; }
-.ri-bar i { display: block; height: 100%; border-radius: 99px; background: var(--c); transform-origin: left center; animation: grow .6s var(--ease) both; }
+.ri-bar i { display: block; height: 100%; border-radius: 99px; background: var(--c); transform-origin: left center; animation: grow var(--duration-reveal) var(--ease) both; }
 .ri-meta { display: block; font-size: 11px; color: var(--muted); margin-top: 5px; font-weight: 600; }
 .tag {
   display: inline-block; vertical-align: 1px;
-  font: 700 9.5px/1.5 var(--font-display); letter-spacing: .4px;
+  font: 700 10.5px/1.5 var(--font-display); letter-spacing: .3px;
   border-radius: 999px; padding: 0 7px;
-  background: var(--cyan-dim); color: var(--cyan);
+  /* Opaque tint: a see-through one added up with the tinted row of a selected
+     route and fell to 4.25:1. */
+  background: color-mix(in srgb, var(--cyan) 12%, var(--card2)); color: var(--cyan);
 }
-.tag.warn { background: color-mix(in srgb, var(--orange) 16%, transparent); color: var(--orange); }
+.tag.warn { background: color-mix(in srgb, var(--orange) 16%, var(--card2)); color: var(--warn-text); }
+/* On a hovered or selected route the row is tinted, so the grey meta line
+   moves closer to the text colour to keep its contrast. */
+.route-item:hover .ri-meta, .route-item.active .ri-meta { color: color-mix(in srgb, var(--text) 78%, transparent); }
 /* Items of a fresh list come in as a cascade. */
-.list.animate > * { animation: rise .32s var(--ease) both; }
+.list.animate > * { animation: rise var(--duration-base) var(--ease) both; }
 .list.animate > :nth-child(2) { animation-delay: 25ms; }
 .list.animate > :nth-child(3) { animation-delay: 50ms; }
 .list.animate > :nth-child(4) { animation-delay: 75ms; }
@@ -466,9 +505,9 @@ select.field-sm { background-position: right 8px center; }
    .stage holds the map and what floats over it. The grid and the vignette
    sit on top of the tiles without catching clicks. */
 .stage { position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden; }
-#map { position: absolute; inset: 0; z-index: 0; background: var(--card2); }
+#map { position: absolute; inset: 0; z-index: var(--z-map); background: var(--card2); }
 .stage::after {
-  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  content: ""; position: absolute; inset: 0; z-index: calc(var(--z-map) + 1); pointer-events: none;
   background:
     radial-gradient(ellipse at center, transparent 55%, rgba(3, 8, 16, .55) 100%),
     repeating-linear-gradient(0deg, rgba(38, 215, 232, .045) 0 1px, transparent 1px 56px),
@@ -485,7 +524,7 @@ select.field-sm { background-position: right 8px center; }
 .leaflet-bar a, .leaflet-touch .leaflet-bar a {
   background: var(--glass); color: var(--text); border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
-  transition: background-color var(--fast), color var(--fast);
+  transition: background-color var(--duration-fast), color var(--duration-fast);
 }
 .leaflet-bar a:last-child { border-bottom: none; }
 .leaflet-bar a:hover, .leaflet-bar a:focus { background: var(--blue); color: #fff; }
@@ -498,10 +537,10 @@ select.field-sm { background-position: right 8px center; }
 
 /* Coverage areas (Leaflet SVG paths). Leaflet writes the colours as
    attributes; CSS only adds the motion. */
-.area { transition: fill-opacity var(--fast), stroke-opacity var(--fast), stroke-width var(--fast); }
+.area { transition: fill-opacity var(--duration-fast), stroke-opacity var(--duration-fast), stroke-width var(--duration-fast); }
 .area.is-selected { stroke-dasharray: 7 5; animation: march 1.1s linear infinite; }
 .area-approx.is-selected { stroke-dasharray: 3 5; }
-.origin { transition: stroke-width var(--fast); }
+.origin { transition: stroke-width var(--duration-fast); }
 
 /* A selected route's home base pulses in the route colour. */
 .pulse {
@@ -519,12 +558,12 @@ select.field-sm { background-position: right 8px center; }
 
 /* Hover tip, next to the cursor. */
 .tip {
-  position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none;
+  position: absolute; left: 0; top: 0; z-index: var(--z-overlay); pointer-events: none;
   padding: 8px 11px; border-radius: 10px; max-width: 270px;
   background: var(--glass); border: 1px solid var(--border2);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   box-shadow: var(--shadow-lg); font-size: 12px; font-weight: 600;
-  opacity: 0; transition: opacity .12s;
+  opacity: 0; transition: opacity var(--duration-fast) var(--ease);
   will-change: transform;
 }
 .tip.on { opacity: 1; }
@@ -534,7 +573,7 @@ select.field-sm { background-position: right 8px center; }
 
 /* Status bar: areas on screen, coordinate under the cursor, zoom, link. */
 .hud {
-  position: absolute; left: 14px; bottom: 24px; z-index: 3;
+  position: absolute; left: 14px; bottom: 24px; z-index: var(--z-overlay);
   display: flex; align-items: center;
   border-radius: 11px; overflow: hidden;
   background: var(--glass); border: 1px solid var(--border2);
@@ -542,26 +581,26 @@ select.field-sm { background-position: right 8px center; }
   box-shadow: var(--shadow-lg);
   font: 600 11.5px/1 var(--mono); color: var(--muted);
 }
-.ready .hud { animation: rise .5s var(--ease) .3s both; }
-.ready .base-picker { animation: rise .5s var(--ease) .35s both; }
+.ready .hud { animation: rise var(--duration-slow) var(--ease) .3s both; }
+.ready .base-picker { animation: rise var(--duration-slow) var(--ease) .35s both; }
 .hud > span { padding: 8px 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .hud > span + span { border-left: 1px solid var(--border); }
 .hud b { color: var(--text); font-weight: 700; }
 .hud-live::before {
   content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%;
   background: var(--green); box-shadow: 0 0 8px var(--green); vertical-align: 1px;
-  animation: blink 2.4s ease-in-out infinite;
 }
+.ready .hud-live::before { animation: blink 1.2s ease-in-out .6s 3; }
 #btnCopyLink {
   border: none; border-left: 1px solid var(--border); background: transparent; color: var(--cyan);
   font: 700 11.5px/1 var(--font); padding: 8px 12px; cursor: pointer;
-  transition: background-color var(--fast), color var(--fast);
+  transition: background-color var(--duration-fast), color var(--duration-fast);
 }
 #btnCopyLink:hover { background: var(--cyan-dim); color: var(--text); }
 
 /* Basemap picker: a segmented control. */
 .base-picker {
-  position: absolute; right: 14px; bottom: 28px; z-index: 3;
+  position: absolute; right: 14px; bottom: 28px; z-index: var(--z-overlay);
   display: flex; gap: 2px; padding: 3px;
   background: var(--glass); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   border: 1px solid var(--border2); border-radius: 11px; box-shadow: var(--shadow-lg);
@@ -571,14 +610,14 @@ select.field-sm { background-position: right 8px center; }
 .seg.on { background: linear-gradient(135deg, #0875da, #005bac); color: #fff; box-shadow: 0 2px 12px var(--blue-glow); }
 
 .map-banner {
-  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 4;
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: var(--z-detail);
   display: flex; align-items: center; gap: 12px; white-space: nowrap;
   padding: 7px 8px 7px 16px; border-radius: 999px;
   background: color-mix(in srgb, var(--orange) 16%, var(--card));
   border: 1px solid color-mix(in srgb, var(--orange) 45%, transparent);
-  color: var(--orange); font-size: 12.5px; font-weight: 700;
+  color: var(--warn-text); font-size: 12.5px; font-weight: 700;
   box-shadow: var(--shadow);
-  animation: drop .34s var(--spring) both;
+  animation: drop var(--duration-base) var(--spring) both;
 }
 .map-banner button {
   border: none; border-radius: 999px; padding: 5px 12px; cursor: pointer;
@@ -587,7 +626,7 @@ select.field-sm { background-position: right 8px center; }
 
 /* ------------------------------------------------------------ DETAIL */
 .detail {
-  position: absolute; right: 14px; top: 14px; z-index: 4;
+  position: absolute; right: 14px; top: 14px; z-index: var(--z-detail);
   width: 330px; max-width: calc(100% - 28px);
   max-height: calc(100% - 100px); overflow-y: auto; overscroll-behavior: contain;
   background: var(--glass);
@@ -596,9 +635,12 @@ select.field-sm { background-position: right 8px center; }
   box-shadow: var(--shadow-lg), 0 0 0 1px rgba(22, 135, 255, .06);
   padding: 15px 15px 13px;
   transform-origin: top right;
-  animation: pop-in .3s var(--spring) both;
+  animation: pop-in var(--duration-base) var(--spring) both;
 }
+/* Leaving runs at ~75% of the entrance, back towards where it came from. */
+.detail.leaving { animation: pop-out calc(var(--duration-base) * .75) var(--ease-in) both; pointer-events: none; }
 .detail::before { content: ""; display: block; height: 3px; margin: -15px -15px 12px; background: var(--c, var(--rule)); }
+.detail-title:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 4px; }
 .detail-top { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 .detail-top .dot { width: 12px; height: 12px; margin-top: 5px; background: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 25%, transparent), 0 0 12px var(--c); }
 .detail-heading { flex: 1; min-width: 0; }
@@ -610,7 +652,7 @@ select.field-sm { background-position: right 8px center; }
   background: var(--card2); border: 1px solid var(--border); color: var(--muted); cursor: pointer;
 }
 .detail-close:hover { color: #fff; background: var(--red); border-color: var(--red); transform: rotate(90deg); }
-.detail-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 0; font-size: 13px; animation: rise .3s var(--ease) both; }
+.detail-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 0; font-size: 13px; animation: rise var(--duration-base) var(--ease) both; }
 .detail-row:nth-of-type(2) { animation-delay: 30ms; }
 .detail-row:nth-of-type(3) { animation-delay: 60ms; }
 .detail-row:nth-of-type(4) { animation-delay: 90ms; }
@@ -623,7 +665,7 @@ select.field-sm { background-position: right 8px center; }
   border-left: 3px solid var(--orange); border-radius: var(--rsm);
   background: color-mix(in srgb, var(--orange) 12%, var(--card));
 }
-.detail-alert strong { color: var(--orange); font-size: 13px; font-weight: 800; }
+.detail-alert strong { color: var(--warn-text); font-size: 13px; font-weight: 800; }
 .detail-alert span { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
 .detail-section { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
 .detail-section h4 { margin: 0 0 7px; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
@@ -652,7 +694,7 @@ select.field-sm { background-position: right 8px center; }
 .btn.primary::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, .25), transparent 70%);
-  transform: translateX(-120%); transition: transform .6s var(--ease);
+  transform: translateX(-120%); transition: transform var(--duration-reveal) var(--ease);
 }
 .btn.primary:hover { color: #fff; box-shadow: 0 12px 27px rgba(0, 91, 172, .34); filter: brightness(1.07); }
 .btn.primary:hover::after { transform: translateX(120%); }
@@ -661,9 +703,9 @@ select.field-sm { background-position: right 8px center; }
    Only properties the browser animates without layout: colour, border,
    opacity and transform. */
 .chip, .route-item, .area-item, .seg, .btn, .detail-close, .link-btn {
-  transition: border-color var(--fast) var(--ease), background-color var(--fast) var(--ease),
-              color var(--fast) var(--ease), box-shadow var(--fast) var(--ease),
-              transform var(--fast) var(--ease), filter var(--fast);
+  transition: border-color var(--duration-fast) var(--ease), background-color var(--duration-fast) var(--ease),
+              color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease),
+              transform var(--duration-fast) var(--ease), filter var(--duration-fast);
 }
 .route-item:hover, .area-item:hover { transform: translateX(2px); }
 .btn:hover { transform: translateY(-1px); }
@@ -671,7 +713,7 @@ select.field-sm { background-position: right 8px center; }
 button:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* The panel's cards rise in sequence as the boot screen fades out. */
-.ready .panel > * { animation: rise .5s var(--ease) both; }
+.ready .panel > * { animation: rise var(--duration-slow) var(--ease) both; }
 .ready .panel > :nth-child(2) { animation-delay: 50ms; }
 .ready .panel > :nth-child(3) { animation-delay: 100ms; }
 .ready .panel > :nth-child(4) { animation-delay: 150ms; }
@@ -680,9 +722,26 @@ button:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid
 .ready .panel > :nth-child(n+7) { animation-delay: 300ms; }
 .detail .note { margin: 8px 0 2px; }
 
+/* No orphan word on a title's last line; notes avoid a lone short line. */
+.detail-title, .boot-title, .tip-title { text-wrap: balance; }
+.note, .note-box, .detail-alert span, .boot-error, .msg { text-wrap: pretty; }
+
+/* Switching the theme cross-fades the whole page (View Transitions; where the
+   API is missing, or motion is reduced, the switch is instant). */
+::view-transition-old(root), ::view-transition-new(root) {
+  animation-duration: var(--duration-slow);
+  animation-timing-function: var(--ease);
+}
+
+/* The phone drawer's backdrop: dims the map and closes the drawer on tap. */
+.scrim { display: none; }
+
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes drop { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translateX(-50%); } }
 @keyframes pop-in { from { opacity: 0; transform: scale(.94) translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes pop-out { to { opacity: 0; transform: scale(.97) translateY(-6px); } }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+@keyframes sheet-out { to { opacity: 0; transform: translateY(18px); } }
 @keyframes pop { from { transform: scale(0); } to { transform: scale(1); } }
 @keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @keyframes shine { from { transform: translateX(-100%); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
@@ -690,8 +749,8 @@ button:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid
 @keyframes ring { 0% { transform: scale(.6); opacity: .9; } 70%, 100% { transform: scale(2.4); opacity: 0; } }
 @keyframes draw-route { 0% { stroke-dashoffset: 1; } 55%, 80% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
 @keyframes sweep { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
-@keyframes scan { 0%, 15% { transform: translateY(0); } 85%, 100% { transform: translateY(360%); } }
-@keyframes sheen { 0%, 70% { transform: translateX(0); } 100% { transform: translateX(360%); } }
+@keyframes scan { from { transform: translateY(0); } to { transform: translateY(360%); } }
+@keyframes sheen { from { transform: translateX(0); } to { transform: translateX(360%); } }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @keyframes march { to { stroke-dashoffset: -24; } }
 
@@ -704,17 +763,36 @@ button:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid
   .logo-name { font-size: 17px; }
   .logo-tag { display: none; }
   /* The panel becomes a drawer over the map. */
+  /* Closed, it is also hidden from the Tab order (visibility flips after the
+     slide, so the way out is still animated). */
   .panel {
-    position: absolute; inset: 0 auto 0 0; z-index: 1002;
+    position: absolute; inset: 0 auto 0 0; z-index: var(--z-drawer);
     width: min(90vw, var(--panel));
-    transform: translateX(-101%); transition: transform .3s var(--ease);
+    transform: translateX(-101%); visibility: hidden;
+    transition: transform var(--duration-base) var(--ease), visibility 0s linear var(--duration-base);
     box-shadow: var(--shadow-lg);
   }
-  .app.collapsed .panel { margin-left: 0; opacity: 1; }
-  body.panel-open .panel { transform: none; pointer-events: auto; }
+  /* iOS zooms into any field under 16 px when it gets the focus. */
+  .field, .field-sm { font-size: 16px; }
+  body.panel-open .panel {
+    transform: none; visibility: visible; pointer-events: auto;
+    transition: transform var(--duration-base) var(--ease), visibility 0s;
+  }
+  .scrim {
+    display: block; position: absolute; inset: 0; z-index: var(--z-scrim);
+    background: rgba(3, 8, 16, .5); opacity: 0; pointer-events: none;
+    transition: opacity var(--duration-base) var(--ease);
+  }
+  :root[data-theme="light"] .scrim { background: rgba(13, 26, 46, .28); }
+  body.panel-open .scrim { opacity: 1; pointer-events: auto; }
   /* The detail card becomes a sheet at the bottom, over the HUD, so the
-     selected route stays visible above it. */
-  .detail { right: 10px; left: 10px; top: auto; bottom: 10px; width: auto; max-height: 52%; transform-origin: bottom center; }
+     selected route stays visible above it; it rises from and sinks to the
+     bottom edge. */
+  .detail {
+    right: 10px; left: 10px; top: auto; bottom: 10px; width: auto; max-height: 52%;
+    animation-name: sheet-in; animation-timing-function: var(--ease);
+  }
+  .detail.leaving { animation-name: sheet-out; }
   .base-picker { right: 10px; bottom: 34px; }
   .hud { left: 10px; bottom: 84px; }
   .leaflet-control-attribution { font-size: 10px; }
@@ -729,6 +807,7 @@ button:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid
 /* Whoever asked the OS for less motion gets none. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
   .sheen { display: none; }
   .br-trail { stroke-dashoffset: 0; }
 }

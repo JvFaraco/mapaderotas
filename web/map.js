@@ -85,6 +85,7 @@ const state = {
   sort: "areas",
   base: "muted",
   selected: null,     // route_id
+  preview: null,      // route_id under the pointer in the route list
   shown: [],          // areas currently drawn
   map: null,
   groups: {},
@@ -240,10 +241,17 @@ function originVisible(origin) {
 
 /* ---------- map styles ---------- */
 
+/* The route in focus: the one previewed from the list (hover), else the
+   selected one. Everything else is dimmed while there is one. */
+function focusRoute() {
+  return state.preview || state.selected;
+}
+
 function styleFor(area, hovered = false) {
   const color = colorOf(area.route);
-  const isSelected = state.selected === area.route;
-  const dim = !!state.selected && !isSelected;
+  const focus = focusRoute();
+  const isSelected = focus === area.route;
+  const dim = !!focus && !isSelected;
   const lift = hovered ? 1 : 0;
   if (area.kind === "city") {
     return {
@@ -264,7 +272,8 @@ function styleFor(area, hovered = false) {
 }
 
 function originStyle(origin) {
-  const dim = !!state.selected && state.selected !== origin.route;
+  const focus = focusRoute();
+  const dim = !!focus && focus !== origin.route;
   return { radius: 6.5, weight: 2.5, color: "#fff", opacity: dim ? .45 : 1, fillColor: colorOf(origin.route), fillOpacity: dim ? .35 : 1 };
 }
 
@@ -327,18 +336,12 @@ function drawLayers() {
 function applySelectionStyles() {
   state.shown.forEach((area) => {
     const isSelected = state.selected === area.route;
-    area.layer.setStyle(styleFor(area));
     area.layer.eachLayer((path) => {
       const node = path.getElement && path.getElement();
       if (node) node.classList.toggle("is-selected", isSelected);
     });
-    if (isSelected) area.layer.bringToFront();
   });
-  state.origins.forEach((origin) => {
-    if (!origin.layer) return;
-    origin.layer.setStyle(originStyle(origin));
-    if (state.selected === origin.route) origin.layer.bringToFront();
-  });
+  restyle();
 
   if (state.pulse) { state.map.removeLayer(state.pulse); state.pulse = null; }
   const home = state.selected && state.origins.find((origin) => origin.route === state.selected && origin.layer);
@@ -348,6 +351,32 @@ function applySelectionStyles() {
       icon: L.divIcon({ className: "", iconSize: [0, 0], html: `<div class="pulse" style="--c:${colorOf(home.route)}"></div>` })
     }).addTo(state.map);
   }
+}
+
+/* Colours and order only (no layer rebuilt): cheap enough to run on every
+   hover of the route list. */
+function restyle() {
+  const focus = focusRoute();
+  state.shown.forEach((area) => {
+    area.layer.setStyle(styleFor(area));
+    if (area.route === focus) area.layer.bringToFront();
+  });
+  state.origins.forEach((origin) => {
+    if (!origin.layer) return;
+    origin.layer.setStyle(originStyle(origin));
+    if (origin.route === focus) origin.layer.bringToFront();
+  });
+}
+
+/* Hovering (or tabbing through) the route list lights that route up on the
+   map, without moving the camera. Pointer devices only: on touch the "hover"
+   would stick after the tap. */
+const CAN_HOVER = window.matchMedia && window.matchMedia("(hover: hover)").matches;
+
+function previewRoute(routeId) {
+  if (state.preview === routeId) return;
+  state.preview = routeId;
+  restyle();
 }
 
 /* ---------- hover tip ---------- */
@@ -409,24 +438,64 @@ function wirePointer() {
 
 /* ---------- selection and detail card ---------- */
 
-function selectRoute(routeId, { area = null, origin = null, zoom = false } = {}) {
+/* Keyboard: a card opened from the keyboard takes the focus (on its title),
+   and closing it gives the focus back to whatever opened it, instead of
+   dropping it on <body>. */
+let focusReturn = null;
+
+function selectRoute(routeId, { area = null, origin = null, zoom = false, focus = false } = {}) {
+  const active = document.activeElement;
+  if (active && active !== document.body && !el("detail").contains(active)) focusReturn = active;
+  state.preview = null;
   state.selected = routeId;
   applySelectionStyles();
   markActiveRoute();
   if (area) showAreaDetail(area);
   else if (origin) showOriginDetail(origin);
   else showRouteDetail(routeId);
+  if (focus) el("detailTitle").focus();
   if (zoom) zoomToRoute(routeId);
   scheduleLink();
 }
 
+function restoreFocus(routeId) {
+  let target = focusReturn && focusReturn.isConnected ? focusReturn : null;
+  if (!target && routeId) {
+    target = [...el("routeList").querySelectorAll(".route-item")].find((item) => item.dataset.route === routeId) || null;
+  }
+  // A closed drawer on a phone hides the list: the map takes the focus then.
+  if (target && el("panel").contains(target) && !panelIsOpen()) target = null;
+  (target || el("map")).focus();
+  focusReturn = null;
+}
+
 function clearSelection() {
   if (!state.selected && el("detail").hidden) return;
+  const routeId = state.selected;
+  const hadFocus = el("detail").contains(document.activeElement);
+  state.preview = null;
   state.selected = null;
   applySelectionStyles();
   markActiveRoute();
-  el("detail").hidden = true;
+  closeDetail();
+  if (hadFocus) restoreFocus(routeId);
   scheduleLink();
+}
+
+/* The card leaves with a short fade (CSS .leaving), then is hidden. A new
+   selection during the fade cancels it (openDetail). */
+let detailTimer = null;
+
+function closeDetail() {
+  const detail = el("detail");
+  if (detail.hidden) return;
+  clearTimeout(detailTimer);
+  if (REDUCED_MOTION) { detail.hidden = true; return; }
+  detail.classList.add("leaving");
+  detailTimer = setTimeout(() => {
+    detail.hidden = true;
+    detail.classList.remove("leaving");
+  }, 200);
 }
 
 function row(label, value) {
@@ -451,6 +520,8 @@ function areaList(routeId, except) {
 
 function openDetail(color, html) {
   const detail = el("detail");
+  clearTimeout(detailTimer);
+  detail.classList.remove("leaving");
   detail.style.setProperty("--c", color);
   detail.innerHTML = html;
   detail.hidden = false;
@@ -459,7 +530,7 @@ function openDetail(color, html) {
 
 function detailHeader(title, subtitle) {
   return `<div class="detail-top"><span class="dot"></span>
-    <div class="detail-heading"><div class="detail-title">${esc(title)}</div><div class="detail-sub">${esc(subtitle)}</div></div>
+    <div class="detail-heading"><h2 class="detail-title" id="detailTitle" tabindex="-1">${esc(title)}</h2><div class="detail-sub">${esc(subtitle)}</div></div>
     <button type="button" class="detail-close" data-act="close" aria-label="Close and clear the selection" title="Close (Esc)">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button></div>`;
@@ -780,19 +851,81 @@ function buildBasePicker() {
   });
 }
 
-function toggleTheme() {
+/* Theme. index.html already applied the saved choice, or the system's, before
+   the first paint. Until the viewer picks one, the map keeps following the
+   system; a pick made with the button is remembered (when storage exists). */
+function savedTheme() {
+  try {
+    const theme = localStorage.getItem(THEME_KEY);
+    return theme === "light" || theme === "dark" ? theme : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/* The switch cross-fades the whole page with a View Transition where the
+   browser has one and motion is not reduced; otherwise it is instant. */
+function setTheme(theme, { save = false } = {}) {
   const root = document.documentElement;
-  const next = root.dataset.theme === "light" ? "dark" : "light";
-  root.dataset.theme = next;
-  try { localStorage.setItem(THEME_KEY, next); } catch (error) { /* no storage: it just is not remembered */ }
+  if (save) {
+    try { localStorage.setItem(THEME_KEY, theme); } catch (error) { /* no storage: it just is not remembered */ }
+  }
+  if (root.dataset.theme === theme) return;
+  const apply = () => { root.dataset.theme = theme; };
+  if (document.startViewTransition && !REDUCED_MOTION) document.startViewTransition(apply);
+  else apply();
+}
+
+function toggleTheme() {
+  setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", { save: true });
+}
+
+function followSystemTheme() {
+  const query = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)");
+  if (!query || !query.addEventListener) return;
+  query.addEventListener("change", (event) => {
+    if (!savedTheme()) setTheme(event.matches ? "light" : "dark");
+  });
 }
 
 /* ---------- wiring ---------- */
 
 function setPanelOpen(open) {
   if (isNarrow()) document.body.classList.toggle("panel-open", open);
-  else el("app").classList.toggle("collapsed", !open);
+  else slidePanel(open);
   el("btnPanel").setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+/* Desktop. Animating the panel's width (or margin) would re-lay the page and
+   resize the map on every frame. Instead the panel floats over the map while
+   it slides (transform only), and the map is resized once: when the panel
+   leaves the layout, or when it rejoins it. The view shifts by the same width,
+   so the coverage stays where it was on screen. */
+let panelTimer = null;
+
+function slidePanel(open) {
+  const app = el("app");
+  const width = el("panel").offsetWidth;
+  clearTimeout(panelTimer);
+  if (!open) {
+    if (app.classList.contains("collapsed")) return;
+    const floating = app.classList.contains("panel-floating");
+    app.classList.add("panel-floating", "collapsed");
+    if (!floating) shiftView(-width);
+    return;
+  }
+  if (!app.classList.contains("collapsed")) return;
+  app.classList.remove("collapsed");
+  panelTimer = setTimeout(() => {
+    app.classList.remove("panel-floating");
+    shiftView(width);
+  }, REDUCED_MOTION ? 0 : 260);
+}
+
+function shiftView(dx) {
+  if (!state.map) return;
+  state.map.invalidateSize({ pan: false });
+  state.map.panBy([dx, 0], { animate: false });
 }
 
 function panelIsOpen() {
@@ -843,8 +976,24 @@ function wireControls() {
     const item = event.target.closest(".route-item");
     if (!item) return;
     if (isNarrow()) setPanelOpen(false);
-    selectRoute(item.dataset.route, { zoom: true });
+    // detail === 0: the click came from Enter/Space, not from a pointer.
+    selectRoute(item.dataset.route, { zoom: true, focus: event.detail === 0 });
   });
+  if (CAN_HOVER) {
+    el("routeList").addEventListener("mouseover", (event) => {
+      const item = event.target.closest(".route-item");
+      if (item) previewRoute(item.dataset.route);
+    });
+    el("routeList").addEventListener("mouseleave", () => previewRoute(null));
+  }
+  el("routeList").addEventListener("focusin", (event) => {
+    const item = event.target.closest(".route-item");
+    if (item && item.matches(":focus-visible")) previewRoute(item.dataset.route);
+  });
+  el("routeList").addEventListener("focusout", (event) => {
+    if (!el("routeList").contains(event.relatedTarget)) previewRoute(null);
+  });
+  el("scrim").addEventListener("click", () => setPanelOpen(false));
 
   el("detail").addEventListener("click", (event) => {
     const target = event.target.closest("[data-act], [data-area]");
@@ -853,7 +1002,8 @@ function wireControls() {
     if (target.dataset.act === "zoom-route") return zoomToRoute(state.selected);
     const area = state.areas[Number(target.dataset.area)];
     if (area) {
-      selectRoute(area.route, { area });
+      // The clicked item is replaced by the new card: keep the keyboard in it.
+      selectRoute(area.route, { area, focus: event.detail === 0 });
       flyTo(boundsOf([area]));
     }
   });
@@ -946,6 +1096,7 @@ function start(data) {
   renderLegend();
   wirePointer();
   wireControls();
+  followSystemTheme();
   setPanelOpen(!isNarrow());
 
   refresh({ regions: true });

@@ -168,9 +168,12 @@ def main() -> int:
             return 1
         with serve(site) as url, sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            overview = browser.new_page(viewport={"width": 1440, "height": 860}, device_scale_factor=2)
+            # The map follows the system theme on a first visit: pin it to dark.
+            overview = browser.new_page(
+                viewport={"width": 1440, "height": 860}, device_scale_factor=2, color_scheme="dark"
+            )
             capture_overview(overview, url, args.out / "overview.png")
-            walk = browser.new_page(viewport={"width": GIF_VIEWPORT[0], "height": GIF_VIEWPORT[1]})
+            walk = browser.new_page(viewport={"width": GIF_VIEWPORT[0], "height": GIF_VIEWPORT[1]}, color_scheme="dark")
             capture_gif(walk, url, args.out / "demo.gif")
             browser.close()
     for name in ("overview.png", "demo.gif"):
